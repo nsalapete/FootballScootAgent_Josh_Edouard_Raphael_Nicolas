@@ -17,6 +17,7 @@ class Claim(BaseModel):
     text: str
     nature: Nature
     evidence_ids: list[str] = Field(default_factory=list)
+    removal_reason: str | None = Field(None, description="Set by the verifier when the claim is removed")
 
 
 class ToolCall(BaseModel):
@@ -42,3 +43,4 @@ class AgentAnswer(BaseModel):
     removed_claims: list[Claim] = Field(default_factory=list)
     trace: list[ToolCall] = Field(default_factory=list)
     refused: bool = False
+    needs_clarification: bool = Field(False, description="True when the answer is a question about an ambiguous name")

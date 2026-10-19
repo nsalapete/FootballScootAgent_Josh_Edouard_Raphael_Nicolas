@@ -23,3 +23,19 @@ One line per choice not settled by `CLAUDE.md`, in the order it was made.
 - **C1 · `communities`**: clubs listed by decreasing PageRank, at most 100 names per community and 100 communities
   (rule "LIMIT on every list"); `size` is always the true member count.
 - **C1 · `hubs`**: ties broken by `club_id`; before any refresh (no `pagerank`) it returns `[]`.
+- **C2 · scope**: both clubs of a transfer must play in `SCOPE_COMPETITIONS` (club's `domestic_competition_id` in
+  DuckDB), the same scope as the ingestion; transfers to or from other leagues, self-loops and missing seasons dropped.
+  About 240 clubs and 9,000 directed pairs.
+- **C2 · season**: Transfermarkt label `22/23` mapped to its start year 2022, like `Transfer.season` in the schema.
+- **C2 · sample = directed pair (seller, buyer)**, like `SENDS_TO` and `PREDICTED_LINK`. Reverse of an existing pair
+  counts as a new pair.
+- **C2 · positives** need both clubs in the training graph: a club with no past transfer has no neighbourhood, every
+  topological feature would be 0 (cold start, out of scope).
+- **C2 · negatives**: uniform random pairs of training-graph clubs, never traded up to the end of the target window,
+  5 per positive, `random.Random(42)`; capped by the number of free pairs.
+- **C2 · features**: common neighbours, Adamic-Adar and preferential attachment on the *undirected* training graph
+  (a shared trading partner matters in both directions); same country from the domestic competition; PageRank gap =
+  absolute difference of PageRank on the *directed* graph weighted by `count` (networkx).
+- **C2 · two temporal splits**: test = graph up to 2022, new pairs of 2023-2024 (the protocol of the checklist);
+  train = same protocol two seasons earlier (graph up to 2020, new pairs of 2021-2022), so the model is fit and
+  evaluated on disjoint label windows and no feature ever sees its own label period.

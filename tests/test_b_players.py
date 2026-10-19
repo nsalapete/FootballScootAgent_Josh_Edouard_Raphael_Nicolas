@@ -6,6 +6,7 @@ import pytest
 
 from app.models.players import PlayerSearch
 from app.services.players import (
+    _TEAMMATE_PATHS,
     InvalidCursorError,
     PlayerService,
     decode_cursor,
@@ -232,3 +233,72 @@ def test_resolve_lucene_syntax_is_harmless(service):
     assert not service.resolve("+-:~()")
     assert service.resolve('Lucas "Marchand')[0].id == 1
     assert not service.resolve("Zlatan")
+
+
+# ---------- teammate_path ----------
+
+
+@pytest.mark.parametrize("max_hops", [0, 7, -1, True, "6", 2.5, None])
+def test_teammate_path_rejects_invalid_bound_before_any_query(max_hops):
+    class NoDatabase:
+        """Fails the test if the service queries it."""
+
+        def read(self, query, params=None):
+            raise AssertionError(f"unexpected query {query} {params}")
+
+    with pytest.raises(ValueError):
+        PlayerService(NoDatabase()).teammate_path(1, 4, max_hops)
+
+
+def test_teammate_path_queries_are_six_constants():
+    assert sorted(_TEAMMATE_PATHS) == [1, 2, 3, 4, 5, 6]
+    for hops, query in _TEAMMATE_PATHS.items():
+        assert f"[:PLAYED_WITH*..{hops}]" in query
+        assert "$from_id" in query and "$to_id" in query
+
+
+@pytest.mark.neo4j
+def test_teammate_path_four_hops(service):
+    path = service.teammate_path(1, 4)
+    assert [step.player_id for step in path.players] == [1, 6, 2, 3, 4]
+    assert path.players[0].name == "Lucas Marchand"
+    assert path.matches_together == [12, 10, 30, 25]
+    assert path.hops == 4
+
+
+@pytest.mark.neo4j
+def test_teammate_path_is_undirected(service):
+    path = service.teammate_path(4, 1)
+    assert [step.player_id for step in path.players] == [4, 3, 2, 6, 1]
+
+
+@pytest.mark.neo4j
+def test_teammate_path_six_hops_is_the_limit(service):
+    path = service.teammate_path(13, 8)
+    assert [step.player_id for step in path.players] == [13, 1, 6, 2, 3, 4, 8]
+    assert path.matches_together == [35, 12, 10, 30, 25, 33]
+    assert path.hops == 6
+
+
+@pytest.mark.neo4j
+@pytest.mark.parametrize(
+    ("from_id", "to_id"),
+    [(14, 7), (1, 10), (16, 1), (-424242, 1), (1, -424242)],
+    ids=["seven-hops", "separate-components", "no-teammate", "unknown-start", "unknown-end"],
+)
+def test_teammate_path_none(service, from_id, to_id):
+    assert service.teammate_path(from_id, to_id) is None
+
+
+@pytest.mark.neo4j
+def test_teammate_path_respects_smaller_bound(service):
+    assert service.teammate_path(1, 4, max_hops=3) is None
+    assert service.teammate_path(1, 4, max_hops=4).hops == 4
+
+
+@pytest.mark.neo4j
+def test_teammate_path_same_player(service):
+    path = service.teammate_path(16, 16)
+    assert [step.player_id for step in path.players] == [16]
+    assert (path.matches_together, path.hops) == ([], 0)
+    assert service.teammate_path(-424242, -424242) is None

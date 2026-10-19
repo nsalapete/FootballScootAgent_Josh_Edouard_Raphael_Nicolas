@@ -11,10 +11,13 @@ from typing import Any
 
 from app.database.neo4j import Neo4jClient, Record
 from app.models.common import EntityMatch, Page
-from app.models.players import PlayerSearch, PlayerSummary, TeammatePath, Valuation
+from app.models.players import PathStep, PlayerSearch, PlayerSummary, TeammatePath, Valuation
 
 # Upper bound on the valuation history of one player (a real career has a few dozen points).
 MAX_VALUATIONS = 500
+# Longest teammate chain searched: six degrees of separation, and the cost of a breadth-first search grows
+# roughly as (average number of teammates) ** hops.
+MAX_HOPS = 6
 # Words shorter than this are matched exactly by `resolve`: one edit on a 3-letter word matches too much.
 FUZZY_MIN_LENGTH = 4
 
@@ -69,6 +72,17 @@ RETURN v.date AS as_of, v.value_eur AS value_eur
 ORDER BY as_of ASC
 LIMIT $limit
 """
+
+_TEAMMATE_PATH = """
+MATCH (start:Player {player_id: $from_id}), (goal:Player {player_id: $to_id})
+MATCH path = shortestPath((start)-[:PLAYED_WITH*..__MAX_HOPS__]-(goal))
+RETURN [node IN nodes(path) | {player_id: node.player_id, name: node.name}] AS players,
+       [rel IN relationships(path) | coalesce(rel.matches, 0)] AS matches_together
+"""
+# The bound of a variable-length pattern cannot be a Cypher parameter. So there is one constant query per
+# allowed bound, built here at import time from integers 1..MAX_HOPS: `teammate_path` picks one of these six
+# strings after checking `max_hops`, and nothing coming from a request is ever written into a query.
+_TEAMMATE_PATHS = {hops: _TEAMMATE_PATH.replace("__MAX_HOPS__", str(hops)) for hops in range(1, MAX_HOPS + 1)}
 
 _RESOLVE_PLAYER = """
 CALL db.index.fulltext.queryNodes('player_name_ft', $query) YIELD node, score
@@ -159,7 +173,20 @@ class PlayerService:
 
     def teammate_path(self, from_id: int, to_id: int, max_hops: int = 6) -> TeammatePath | None:
         """Shortest `PLAYED_WITH` chain between two players, None if none within `max_hops` (≤ 6)."""
-        raise NotImplementedError
+        if isinstance(max_hops, bool) or not isinstance(max_hops, int) or not 1 <= max_hops <= MAX_HOPS:
+            raise ValueError(f"max_hops doit être un entier de 1 à {MAX_HOPS}")
+        if from_id == to_id:  # shortestPath refuses identical ends, which are simply 0 hops apart
+            player = self.get(from_id)
+            if player is None:
+                return None
+            return TeammatePath(
+                players=[PathStep(player_id=player.player_id, name=player.name)], matches_together=[], hops=0
+            )
+        rows = self.client.read(_TEAMMATE_PATHS[max_hops], {"from_id": from_id, "to_id": to_id})
+        if not rows:
+            return None
+        steps = [PathStep(**step) for step in rows[0]["players"]]
+        return TeammatePath(players=steps, matches_together=rows[0]["matches_together"], hops=len(steps) - 1)
 
     def value_trend(self, player_id: int) -> list[Valuation]:
         """Market-value history of a player, oldest first."""

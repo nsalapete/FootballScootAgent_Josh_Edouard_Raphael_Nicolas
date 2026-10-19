@@ -54,3 +54,19 @@ Findings that shape the ingestion:
   limit instead of the 10 s API limit (`NEO4J_QUERY_TIMEOUT_S`), which a cold `MERGE` batch can exceed.
 - **Season parsing** in Python (`parse_season`, unit-tested), not in SQL: `'99/00'` -> 1999, `'22/23'` -> 2022,
   a four-digit start year is kept as is, anything else -> `None` (transfer dropped).
+
+## A2 · derived relationships
+
+- **`PLAYED_WITH` source**: `appearances` (players who actually played, the 1.8 M rows the schema refers to), not
+  `game_lineups`, which also lists unused substitutes. Two players are teammates in a game when both appear for the same
+  club in the same scope league game.
+- **`PLAYED_WITH` scope**: league games of the scope competitions from `SCOPE_FROM_SEASON` on, scope clubs only (same
+  scope as `PLAYS_IN`); cup and European games are left out so `matches` counts comparable games.
+- **`PLAYED_WITH` aggregation** in DuckDB (temp table of scope appearances, self-join on game and club with
+  `a.player_id < b.player_id`): `matches` = distinct games, `first_season` / `last_season` = min / max game season.
+  Only the aggregated pairs are sent to Neo4j, in batches of 5,000.
+- **`SENDS_TO`**: built in Cypher by `build_sends_to(db, club_ids)`, which first deletes the outgoing `SENDS_TO` of
+  the given clubs then recreates them from `Transfer` nodes, so a transfer removed by a later run leaves no stale count.
+  Restricted to the source clubs passed as parameter (500 per transaction): a test only rebuilds its own clubs.
+- **`SENDS_TO` content**: every transfer counts in `count` (loans included, as in the mini graph); `total_fee_eur` =
+  `sum(t.fee_eur)`, which skips unknown fees and gives 0 when no fee of the pair is known.

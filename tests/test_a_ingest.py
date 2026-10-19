@@ -174,7 +174,10 @@ INSERT INTO games VALUES
     ('-10', 'test-a-league', '2020', -1, -2, 'One', 'Two'),
     ('-11', 'test-a-league', '2021', -2, -1, 'Two', 'One'),
     ('-12', 'test-a-league', '2019', -4, -1, 'Four', 'One');
-INSERT INTO appearances VALUES (-10, -1, -1), (-10, -2, -2), (-12, -4, -4);
+INSERT INTO appearances VALUES
+    (-10, -1, -1), (-10, -3, -1), (-10, -2, -2),
+    (-11, -1, -1), (-11, -3, -1), (-11, -2, -2),
+    (-12, -4, -4), (-12, -1, -1), (-12, -3, -1);
 INSERT INTO players VALUES
     (-1, 'Test A Defender', 'Defender', 'Left-Back', '2003-04-12', 12000000, 'left', 181, '-1', 'One',
      'test-a-land', '2024'),
@@ -207,6 +210,8 @@ CALL () {
   UNION ALL MATCH (p:Player)-[r:PLAYS_FOR]->() WHERE p.player_id < 0 RETURN 'PLAYS_FOR' AS kind, count(r) AS n
   UNION ALL MATCH (p:Player)-[r:CITIZEN_OF]->() WHERE p.player_id < 0 RETURN 'CITIZEN_OF' AS kind, count(r) AS n
   UNION ALL MATCH (t:Transfer)-[r:FROM|TO]->(c:Club) WHERE c.club_id < 0 RETURN 'FROM_TO' AS kind, count(r) AS n
+  UNION ALL MATCH (p:Player)-[r:PLAYED_WITH]->() WHERE p.player_id < 0 RETURN 'PLAYED_WITH' AS kind, count(r) AS n
+  UNION ALL MATCH (c:Club)-[r:SENDS_TO]->() WHERE c.club_id < 0 RETURN 'SENDS_TO' AS kind, count(r) AS n
   UNION ALL MATCH (c:Country) WHERE c.code STARTS WITH 'test-a-' RETURN 'Country' AS kind, count(c) AS n
   UNION ALL MATCH (c:Competition) WHERE c.competition_id STARTS WITH 'test-a-' RETURN 'Competition' AS kind,
                                                                                       count(c) AS n
@@ -249,6 +254,8 @@ def test_extract_keeps_only_the_scope(tiny_duckdb):
     assert sorted(row["player_id"] for row in data.players) == [-3, -2, -1]
     assert len(data.transfers) == 3
     assert [row["valuation_id"] for row in data.valuations] == ["-1-2021-06-30"]
+    # The 2019 game is before the scope: only the 2020 and 2021 games count for the pair (-3, -1).
+    assert data.played_with == [{"a": -3, "b": -1, "matches": 2, "first_season": 2020, "last_season": 2021}]
     assert sorted((row["club_id"], row["season"]) for row in data.plays_in) == [
         (-2, 2020),
         (-2, 2021),
@@ -269,6 +276,8 @@ def test_ingest_builds_the_expected_graph(neo4j_db, ingested):
         "PLAYS_FOR": 3,
         "CITIZEN_OF": 3,
         "FROM_TO": 6,
+        "PLAYED_WITH": 1,
+        "SENDS_TO": 3,
         "Country": 2,
         "Competition": 1,
     }
@@ -325,3 +334,43 @@ def test_reingest_moves_the_current_club(neo4j_db, ingested, tiny_duckdb):
     rows = neo4j_db.read("MATCH (:Player {player_id: -1})-[:PLAYS_FOR]->(c) RETURN c.club_id AS club")
     assert rows == [{"club": -2}]
     assert ingested["loaded"]["plays_for"] == 3
+
+
+@pytest.mark.neo4j
+def test_derived_relationships(neo4j_db, ingested):
+    assert ingested["loaded"]["played_with"] == 1
+    assert ingested["loaded"]["sends_to"] == 3
+    played = neo4j_db.read(
+        "MATCH (a:Player)-[r:PLAYED_WITH]->(b:Player) WHERE a.player_id < 0 "
+        "RETURN a.player_id AS a, b.player_id AS b, r.matches AS matches, r.first_season AS first, "
+        "r.last_season AS last"
+    )
+    assert played == [{"a": -3, "b": -1, "matches": 2, "first": 2020, "last": 2021}]
+    sends = neo4j_db.read(
+        "MATCH (src:Club)-[r:SENDS_TO]->(dst:Club) WHERE src.club_id < 0 "
+        "RETURN src.club_id AS src, dst.club_id AS dst, r.count AS n, r.total_fee_eur AS fee ORDER BY src, dst"
+    )
+    # Unknown fee (-1 -> -2) counts as a transfer but adds nothing to the sum; a free transfer adds 0.
+    assert sends == [
+        {"src": -3, "dst": -1, "n": 1, "fee": 1500000},
+        {"src": -2, "dst": -3, "n": 1, "fee": 0},
+        {"src": -1, "dst": -2, "n": 1, "fee": 0},
+    ]
+
+
+MINI_GRAPH_SENDS_TO = (
+    "MATCH (src:Club)-[r:SENDS_TO]->(dst:Club) WHERE src.club_id > 0 "
+    "RETURN src.club_id AS src, dst.club_id AS dst, r.count AS n, r.total_fee_eur AS fee ORDER BY src, dst"
+)
+
+
+@pytest.mark.neo4j
+def test_sends_to_only_touches_the_given_clubs(neo4j_db, ingested):  # pylint: disable=unused-argument
+    before = neo4j_db.read(MINI_GRAPH_SENDS_TO)
+    assert len(before) == 12
+    # The fee of the transfer -1 -> -2 becomes known: only the SENDS_TO of club -1 is recomputed.
+    neo4j_db.write("MATCH (:Player {player_id: -1})-[:MADE]->(t:Transfer) SET t.fee_eur = 4000000")
+    assert seed_data.build_sends_to(neo4j_db, [-1], size=1) == 1
+    assert neo4j_db.read(MINI_GRAPH_SENDS_TO) == before
+    rows = neo4j_db.read("MATCH (:Club {club_id: -1})-[r:SENDS_TO]->() RETURN r.total_fee_eur AS fee")
+    assert rows == [{"fee": 4000000}]

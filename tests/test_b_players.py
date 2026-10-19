@@ -302,3 +302,12 @@ def test_teammate_path_same_player(service):
     assert [step.player_id for step in path.players] == [16]
     assert (path.matches_together, path.hops) == ([], 0)
     assert service.teammate_path(-424242, -424242) is None
+
+
+@pytest.mark.neo4j
+@pytest.mark.parametrize("value", ["Defender' OR 1=1 //", "Defender\" OR true RETURN p //", "x}) DETACH DELETE p //"])
+def test_search_values_never_become_cypher(service, value):
+    # Values travel in params: an injection attempt is just a position that no player has.
+    assert not service.search(PlayerSearch(position=value)).items
+    assert not service.search(PlayerSearch(competition_id=value)).items
+    assert service.get(1) is not None

@@ -20,3 +20,16 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
 - **B1 · `value_trend`** : `LIMIT 500` (règle « LIMIT sur toute liste »), points sans date ou sans montant ignorés.
 - **Environnement Windows** : `git config core.autocrlf false` dans le dépôt, sinon pylint compte chaque fin de ligne
   CRLF (note -3,5/10 au lieu de 10/10) ; `make` absent, commandes du Makefile lancées à la main.
+- **B2 · borne de `teammate_path`** : la longueur d'un motif variable ne peut pas être un paramètre Cypher. Six
+  requêtes constantes (`*..1` à `*..6`) sont construites à l'import à partir d'entiers ; `max_hops` est validé
+  (entier, pas booléen, de 1 à 6, sinon `ValueError`) puis sert de **clé** pour choisir l'une d'elles : aucune valeur
+  venue d'une requête HTTP n'est écrite dans le texte Cypher, donc pas d'injection possible.
+- **B2 · même joueur aux deux bouts** : `shortestPath` lève une erreur ; on renvoie un chemin de 0 saut (le joueur
+  seul) s'il existe, `None` sinon.
+- **B2 · `matches_together`** : `coalesce(r.matches, 0)` pour rester un `list[int]` même si une arête n'a pas le compte.
+- **B2 · filière** : transfert vers un club sans `PLAYS_IN` à la saison du transfert (compétition non suivie) exclu
+  de l'agrégat ; prêts comptés ; montant inconnu compté 0 ; tri `transfers` desc, puis montant desc, puis code.
+- **B2 · `since`** : inclusif (`t.date >= $since`) ; deux variantes constantes de la requête (avec et sans le filtre)
+  au lieu de `$since IS NULL OR ...`, qui cacherait l'index `Transfer(date)` au planificateur.
+- **B2 · `ClubService.resolve`** : même construction de requête Lucene que pour les joueurs (`fulltext_query`,
+  importée depuis `app/services/players.py`).

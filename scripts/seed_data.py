@@ -11,6 +11,11 @@ Scope (`SCOPE_COMPETITIONS`, `SCOPE_FROM_SEASON`):
   "light" club (id and name only);
 - valuations: of scope players, from January 1st of the first scope season on.
 
+Derived relationships are computed at the end:
+- `PLAYED_WITH`: aggregated in DuckDB from the appearances of two players for the same club in the same scope game
+  (self-join, `a < b`); individual appearances never reach Neo4j;
+- `SENDS_TO`: aggregated in Cypher from the `Transfer` nodes, for the clubs passed as a parameter only.
+
 Extraction and filtering run in DuckDB; Neo4j only receives batches of `BATCH_SIZE` rows
 (`UNWIND $rows AS row MERGE ...`), always as query parameters.
 """
@@ -172,6 +177,24 @@ WHERE v.player_id IN (SELECT player_id FROM scope_players)
 ORDER BY v.player_id, v.date
 """
 
+SCOPE_APPEARANCES_SQL = """
+CREATE OR REPLACE TEMP TABLE scope_appearances AS
+SELECT a.game_id, a.player_club_id AS club_id, a.player_id, g.season
+FROM appearances a
+JOIN scope_games g ON g.game_id = a.game_id
+WHERE a.player_club_id IN (SELECT club_id FROM scope_clubs)
+"""
+
+# One row per pair of teammates, stored once from the smaller to the larger player id.
+PLAYED_WITH_SQL = """
+SELECT x.player_id AS a, y.player_id AS b, count(DISTINCT x.game_id) AS matches,
+       min(x.season) AS first_season, max(x.season) AS last_season
+FROM scope_appearances x
+JOIN scope_appearances y ON y.game_id = x.game_id AND y.club_id = x.club_id AND x.player_id < y.player_id
+GROUP BY x.player_id, y.player_id
+ORDER BY a, b
+"""
+
 COMPETITIONS_SQL = """
 SELECT competition_id, name, country_name
 FROM competitions
@@ -192,6 +215,7 @@ class Extract:
     players: list[Row] = field(default_factory=list)
     transfers: list[Row] = field(default_factory=list)
     valuations: list[Row] = field(default_factory=list)
+    played_with: list[Row] = field(default_factory=list)
 
     def club_ids(self) -> list[int]:
         """Every club id of the extract, scope and light."""
@@ -285,6 +309,8 @@ def extract(duckdb_path: str | Path, competitions: list[str], from_season: int) 
         transfers = transfer_rows(fetch(con, TRANSFERS_SQL), from_season)
         con.execute(TRANSFER_PLAYERS_SQL, {"ids": sorted({row["player_id"] for row in transfers}) or [0]})
         con.execute(SCOPE_PLAYERS_SQL, {"from_season": from_season})
+        con.execute(SCOPE_APPEARANCES_SQL)
+        played_with = fetch(con, PLAYED_WITH_SQL)
         raw_players = fetch(con, PLAYERS_SQL)
         raw_valuations = fetch(con, VALUATIONS_SQL, {"from_season": from_season})
         raw_competitions = fetch(con, COMPETITIONS_SQL, {"competitions": competitions})
@@ -317,6 +343,7 @@ def extract(duckdb_path: str | Path, competitions: list[str], from_season: int) 
             }
             for item in raw_valuations
         ],
+        played_with=played_with,
     )
 
 
@@ -408,6 +435,29 @@ SET v.date = row.date, v.value_eur = row.value_eur
 MERGE (p)-[:HAS_VALUATION]->(v)
 """
 
+PLAYED_WITH_CYPHER = """
+UNWIND $rows AS row
+MATCH (a:Player {player_id: row.a}), (b:Player {player_id: row.b})
+MERGE (a)-[r:PLAYED_WITH]->(b)
+SET r.matches = row.matches, r.first_season = row.first_season, r.last_season = row.last_season
+"""
+
+# Outgoing SENDS_TO of the given clubs, rebuilt from scratch so that a removed transfer leaves no stale count.
+# sum() skips null fees (unknown amounts) and gives 0 when every fee of the pair is unknown.
+SENDS_TO_CYPHER = """
+UNWIND $club_ids AS club_id
+MATCH (src:Club {club_id: club_id})
+OPTIONAL MATCH (src)-[old:SENDS_TO]->()
+DELETE old
+WITH DISTINCT src
+MATCH (src)<-[:FROM]-(t:Transfer)-[:TO]->(dst:Club)
+WITH src, dst, count(t) AS transfers, sum(t.fee_eur) AS total
+MERGE (src)-[r:SENDS_TO]->(dst)
+SET r.count = transfers, r.total_fee_eur = total
+RETURN count(r) AS created
+"""
+SENDS_TO_BATCH = 500
+
 NODE_COUNTS_CYPHER = "MATCH (n) UNWIND labels(n) AS label RETURN label, count(*) AS count ORDER BY label LIMIT 100"
 RELATIONSHIP_COUNTS_CYPHER = "MATCH ()-[r]->() RETURN type(r) AS type, count(*) AS count ORDER BY type LIMIT 100"
 
@@ -436,6 +486,23 @@ def load_extract(db: Neo4jClient, data: Extract, size: int = BATCH_SIZE) -> dict
     return {name: load(db, cypher, rows, size) for name, cypher, rows in steps}
 
 
+def build_sends_to(db: Neo4jClient, club_ids: list[int], size: int = SENDS_TO_BATCH) -> int:
+    """Recompute the outgoing `SENDS_TO` of `club_ids` only; return how many relationships they now have."""
+    created = 0
+    for start in range(0, len(club_ids), size):
+        rows = db.write(SENDS_TO_CYPHER, {"club_ids": club_ids[start : start + size]})
+        created += rows[0]["created"] if rows else 0
+    return created
+
+
+def load_derived(db: Neo4jClient, data: Extract, size: int = BATCH_SIZE) -> dict[str, int]:
+    """Derived relationships, once every fact is in the graph."""
+    return {
+        "played_with": load(db, PLAYED_WITH_CYPHER, data.played_with, size),
+        "sends_to": build_sends_to(db, data.club_ids()),
+    }
+
+
 def graph_summary(db: Neo4jClient) -> dict[str, dict[str, int]]:
     """Number of nodes per label and of relationships per type in the whole database."""
     return {
@@ -451,17 +518,20 @@ def ingest(
     from_season: int,
     size: int = BATCH_SIZE,
 ) -> dict[str, Any]:
-    """Constraints, then extraction and loading of the scope; return the loaded row counts and durations."""
+    """Constraints, extraction, facts, then derived relationships; return the row counts and durations."""
     started = time.perf_counter()
     run_file(db, CONSTRAINTS)
     data = extract(duckdb_path, competitions, from_season)
     extracted = time.perf_counter()
     loaded = load_extract(db, data, size)
+    facts_loaded = time.perf_counter()
+    loaded.update(load_derived(db, data, size))
     finished = time.perf_counter()
     return {
         "loaded": loaded,
         "extract_s": round(extracted - started, 1),
-        "load_s": round(finished - extracted, 1),
+        "load_s": round(facts_loaded - extracted, 1),
+        "derived_s": round(finished - facts_loaded, 1),
         "club_ids": data.club_ids(),
     }
 
@@ -471,7 +541,7 @@ def print_report(report: dict[str, Any], summary: dict[str, dict[str, int]]) -> 
     print("Rows sent to Neo4j:")
     for name, count in report["loaded"].items():
         print(f"  {name:<14} {count:>9,}")
-    print(f"Extraction {report['extract_s']} s, loading {report['load_s']} s")
+    print(f"Extraction {report['extract_s']} s, facts {report['load_s']} s, derived {report['derived_s']} s")
     print("Nodes per label:")
     for label, count in summary["nodes"].items():
         print(f"  {label:<14} {count:>9,}")

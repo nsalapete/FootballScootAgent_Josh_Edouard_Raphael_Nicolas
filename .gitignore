@@ -1,0 +1,29 @@
+# Secrets et fichiers personnels
+.env
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+projects_spec.md
+
+# Données (le fichier DuckDB est volumineux : on le télécharge avec `make data`)
+data/*
+!data/.gitkeep
+*.duckdb
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Notebooks et artefacts ML
+.ipynb_checkpoints/
+ml/artifacts/
+
+# Éditeurs et OS
+.vscode/
+.idea/
+.DS_Store

@@ -1,0 +1,21 @@
+# Keep the build context small and secret-free: the image only copies app/, scripts/, ml/ and requirements.txt.
+.git
+.github
+.venv
+.env
+.env.*
+.claude
+CLAUDE.md
+CLAUDE.local.md
+data
+docs
+tests
+nginx
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+ml/artifacts
+*.ipynb

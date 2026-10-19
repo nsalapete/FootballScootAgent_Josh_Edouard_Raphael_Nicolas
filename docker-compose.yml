@@ -1,3 +1,5 @@
+# Stack: proxy (only public entry, port 80) -> api (internal port 8000) -> neo4j. `ingest` loads the data once.
+# Values come from `.env` (`make env`). Owner: B.
 services:
   neo4j:
     image: neo4j:5
@@ -6,17 +8,20 @@ services:
       NEO4J_PLUGINS: '["graph-data-science"]'
       NEO4J_dbms_security_procedures_unrestricted: gds.*
       NEO4J_server_memory_heap_max__size: 2G
+    # Browser and Bolt for the developers, on this machine only: the network never reaches Neo4j directly.
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     volumes:
       - neo4j_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u $${NEO4J_USER:-neo4j} -p $${NEO4J_PASSWORD:-change-me-please} 'RETURN 1' || exit 1"]
+      # Single `$`: Compose substitutes the credentials from `.env` (the container itself has no NEO4J_PASSWORD).
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-change-me-please} 'RETURN 1' || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 30
       start_period: 30s
+    restart: unless-stopped
 
   ingest:
     build: .
@@ -38,6 +43,7 @@ services:
     env_file: .env
     environment:
       NEO4J_URI: bolt://neo4j:7687
+    # Reachable from the proxy only (no `ports`): every request goes through nginx.
     expose:
       - "8000"
     depends_on:
@@ -48,6 +54,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 10s
+    restart: unless-stopped
 
   proxy:
     image: nginx:1.27-alpine
@@ -58,6 +66,12 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
   neo4j_data:

@@ -1,8 +1,16 @@
-.PHONY: help env venv install run docker-build docker-run docker-down seed data test-db test-db-stop bench-db bench-db-stop test lint format clean tree
+.PHONY: help env venv install run docker-build docker-run docker-up docker-logs docker-down seed data test-db test-db-stop bench-db bench-db-stop test lint format clean tree
 
 TAG ?= football-scout-api:dev
 VENV ?= .venv
-PY := . $(VENV)/bin/activate &&
+# Windows (Git Bash) puts the virtualenv scripts in Scripts/ and usually has no python3.
+ifeq ($(OS),Windows_NT)
+VENV_BIN := $(VENV)/Scripts
+PYTHON ?= python
+else
+VENV_BIN := $(VENV)/bin
+PYTHON ?= python3
+endif
+PY := . $(VENV_BIN)/activate &&
 DUCKDB_PATH ?= data/transfermarkt-datasets.duckdb
 DUCKDB_URL ?= https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/transfermarkt-datasets.duckdb
 TEST_DB ?= scout-neo4j-test
@@ -10,14 +18,17 @@ BENCH_DB ?= scout-neo4j-bench
 
 help:
 	@echo "Commandes :"
-	@echo "  make env            Crée .env à partir de .env.example (sans écraser)"
+	@echo "  make help           Affiche cette aide"
+	@echo "  make env           Crée .env à partir de .env.example (sans écraser)"
 	@echo "  make venv           Crée l'environnement virtuel ($(VENV))"
 	@echo "  make install        Installe requirements.txt dans $(VENV)"
 	@echo "  make run            Lance l'API FastAPI en local sur :8000"
 	@echo "  make data           Télécharge le fichier DuckDB Transfermarkt dans data/"
 	@echo "  make seed           Charge les données dans Neo4j (scripts.seed_data)"
 	@echo "  make docker-build   Construit les images Docker (TAG=$(TAG))"
-	@echo "  make docker-run     Démarre la stack (proxy, api, neo4j, ingest)"
+	@echo "  make docker-run     Démarre la stack au premier plan : proxy :80, api, neo4j, ingest"
+	@echo "  make docker-up      Démarre la stack en arrière-plan (puis http://localhost/docs)"
+	@echo "  make docker-logs    Suit les journaux de l'API et du proxy"
 	@echo "  make docker-down    Arrête la stack"
 	@echo "  make test-db        Démarre le Neo4j de test jetable sur le port 7688"
 	@echo "  make test-db-stop   Arrête le Neo4j de test"
@@ -35,11 +46,11 @@ env:
 
 venv:
 	@if [ ! -d "$(VENV)" ]; then \
-	    python3 -m venv $(VENV); \
-	    . $(VENV)/bin/activate && pip install --upgrade pip; \
+	    $(PYTHON) -m venv $(VENV); \
+	    . $(VENV_BIN)/activate && python -m pip install --upgrade pip; \
 	    echo "Environnement $(VENV) créé"; \
 	else echo "$(VENV) existe déjà"; fi
-	@echo "Pour l'activer : source $(VENV)/bin/activate"
+	@echo "Pour l'activer : source $(VENV_BIN)/activate"
 
 install: venv
 	@$(PY) pip install -r requirements.txt
@@ -60,6 +71,12 @@ docker-build: env
 
 docker-run: env
 	docker compose up --build
+
+docker-up: env
+	docker compose up -d --build
+
+docker-logs:
+	docker compose logs -f api proxy
 
 docker-down:
 	docker compose down

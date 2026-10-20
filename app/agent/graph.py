@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from app.agent.evidence import GraphEvidence, number_is_supported, numbers_in_data, numbers_in_text
 from app.agent.tools import ToolBox, ToolResult, failure
-from app.llm.client import get_chat_model
+from app.llm.client import get_chat_model, structured
 from app.models.agent import AgentAnswer, Claim, Nature, ToolCall
 
 MAX_TOOL_CALLS = 6
@@ -198,7 +198,7 @@ class ScoutAgent:
         names: list[str] = []
         reason = out_of_scope_reason(question)
         if reason is None:
-            decision = self._small().with_structured_output(RouteDecision).invoke(
+            decision = structured(self._small(), RouteDecision).invoke(
                 [SystemMessage(ROUTER_PROMPT), HumanMessage(question)]
             )
             if decision.decision == "out_of_scope":
@@ -272,7 +272,7 @@ class ScoutAgent:
             default=str,
             ensure_ascii=False,
         )
-        draft = self._large().with_structured_output(AgentDraft).invoke(
+        draft = structured(self._large(), AgentDraft).invoke(
             [SystemMessage(WRITER_PROMPT), HumanMessage(payload[:20000])]
         )
         return {"draft": draft}

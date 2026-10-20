@@ -413,3 +413,12 @@ def test_router_falls_back_to_the_large_model_when_the_small_one_fails():
     answer = agent.ask("Tell me a joke about cooking")
     assert answer.refused and answer.answer == "Not football."
     assert len(small.calls) == 1 and len(large.calls) == 1
+
+
+def test_numbers_of_driver_dates_are_known_to_the_verifier():
+    from neo4j.time import Date  # pylint: disable=import-outside-toplevel
+
+    from app.agent.evidence import numbers_in_data  # pylint: disable=import-outside-toplevel
+
+    known = numbers_in_data([{"date": Date(2022, 7, 15), "day": date(2024, 1, 5), "missing": None}])
+    assert {2022.0, 7.0, 15.0, 2024.0, 1.0, 5.0} <= known

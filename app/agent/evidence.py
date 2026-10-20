@@ -107,6 +107,10 @@ def numbers_in_data(data: Any) -> set[float]:
     elif isinstance(data, (list, tuple, set)):
         for value in data:
             found |= numbers_in_data(value)
+    elif data is not None:
+        # Temporal values of the driver (`neo4j.time.Date`, `datetime.date`...) are read from their text form,
+        # exactly as the LLM sees them in the tool message.
+        found |= numbers_in_data(str(data))
     return found
 
 

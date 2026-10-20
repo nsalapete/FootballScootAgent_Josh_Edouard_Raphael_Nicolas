@@ -38,3 +38,6 @@ class ImportReport(BaseModel):
     articles_new: int
     rumours_created: int
     unresolved_names: int
+    feeds_failed: int = Field(0, description="Feeds that could not be downloaded or parsed")
+    extraction_errors: int = Field(0, description="Articles whose LLM extraction failed (retried next time)")
+    rejected_quotes: int = Field(0, description="Extracted rumours whose quote is not in the article")

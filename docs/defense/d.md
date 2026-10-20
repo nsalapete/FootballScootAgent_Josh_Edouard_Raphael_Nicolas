@@ -105,6 +105,47 @@ cited. Exact latency and cost: `docs/agent_eval.md` (Thursday).
 | LangGraph prebuilt `ToolNode` / ReAct agent | no control over the tool budget, the trace format or failures |
 | LLM-as-judge verifier | costs another call and can hallucinate too; a deterministic check is auditable |
 
+## 4. Rumours (`app/services/rumours.py`, `scripts/import_articles.py`)
+
+**Life cycle of a rumour.**
+
+```
+feed (RSS / GDELT JSON) -> new URL? -> small LLM extraction {player, club, quote, confidence}
+   -> quote really in the article? -> both names resolve to exactly one node?
+   -> (:Article)-[:REPORTS]->(:Rumour {status: 'pending'})-[:ABOUT]->(:Player), -[:TARGET]->(:Club)
+   -> A's scripts/confirm_rumours.py: confirmed (+ CONFIRMED_BY the real Transfer) | contradicted | expired
+```
+
+- **Import** (`import_articles`, protected by `X-API-Key` on `POST /api/rumours/import`): URLs already stored as
+  `Article.url` are skipped *before* any LLM call, so an article is never paid for twice. One small-model call per
+  new article, structured output `ArticleExtraction`.
+- **Three anti-hallucination checks**, each with a counter in `ImportReport`:
+  1. the quote must appear in the article (ignoring case, accents, punctuation) → otherwise `rejected_quotes`;
+  2. a name is kept only if exactly one of the top-5 full-text hits contains all its words ("Gabriel" matches two
+     players → not resolved) → otherwise `unresolved_names`. A name is **counted, never guessed**;
+  3. the rumour is created only between existing nodes (`MATCH` on ids, never `MERGE` of a player or club).
+- **No duplicates.** A new article on a player/club pair that already has a `pending` rumour is attached to it
+  (`REPORTS`); the rumour id is a hash of URL + player + club, so re-importing is idempotent. A's job dates the
+  rumour from its earliest article.
+- **Failures.** A failing feed is counted (`feeds_failed`); an article whose extraction fails is not stored
+  (`extraction_errors`) so the next run retries it.
+- **Reads.** `for_player` returns rumours with the newest article's source, URL and date, newest first, `LIMIT 100`;
+  `nature` is always `rumour`, whatever the status.
+
+**Source reliability (D5).** Displayed `confidence` = extraction confidence × source reliability, where
+reliability = `(confirmed + 5 × prior) / (decided + 5)`, decided = confirmed + contradicted + expired, prior = global
+confirmation rate (0.5 when nothing is decided). The raw values stay visible (`extraction_confidence`,
+`source_reliability`). Why smoothing: a source with 1 confirmed rumour out of 1 is not 100 % reliable; a large
+source converges to its own rate. Why at read time: it follows A's confirmation job with no stored score to sync.
+Cost: two small aggregate queries per `for_player` call (one over the decided rumours, one per source cited).
+
+| Alternative | Why rejected |
+| --- | --- |
+| Trust the LLM's player/club ids | it would invent ids; resolution against the graph is checkable |
+| Fuzzy "best match" resolution | silently picks the wrong homonym; counting unresolved names is honest |
+| Raw confirmation rate per source | 1/1 = 100 %; unstable for small sources |
+| Storing reliability on `Article` | must be recomputed after every confirmation run |
+
 ## Likely questions
 
 - *Can a string literal fool the validator?* No: strings and comments are blanked before any rule runs
@@ -116,6 +157,10 @@ cited. Exact latency and cost: `docs/agent_eval.md` (Thursday).
   (computed). Only `PREDICTED_MOVE`/`PREDICTED_LINK` are predictions.
 - *What if a service is not implemented yet?* The tool returns an error, the trace shows it, the answer says it
   could not find verifiable information.
+- *Can a confirmed rumour become a fact?* No: the fact is the Transfermarkt `Transfer`; the rumour only points to
+  it with `CONFIRMED_BY`, and the agent still labels the rumour itself `rumour`.
+- *What if the press names a player who is not in the graph?* The name is counted in `unresolved_names` and the
+  rumour is not stored.
 - *Why does the router use regex before the LLM?* Obvious refusals are free, deterministic and testable; the LLM
   handles the subtle cases.
 
@@ -124,3 +169,9 @@ cited. Exact latency and cost: `docs/agent_eval.md` (Thursday).
 - Monday 19/10: D1 (LLM client, PR #1), D2 (Cypher validator, PR #2), D3 (agent core, PR #3) merged, CI green.
   Also removed stray remote branches `feat`, `fix`, `docs`, `test`, `chore`, `refactor` that blocked every
   `type/…` branch name for the whole team.
+- Tuesday 20/10: D4 (rumour reads and import, PR #19), D5 (source reliability, PR #20) merged, CI green.
+  Checked every agent tool against the real services of B and C on the mini graph: all answer correctly
+  (`predicted_moves` of C still raises `NotImplementedError` and is traced as a failed call).
+  Reviewed A's PRs #13–#16 (2 comments each: DuckDB pre-filter, Decimal NaN, loans in `SENDS_TO`, stale
+  `PLAYED_WITH`, loan false positives, pruned transfers vs `CONFIRMED_BY`, confirmation window tolerance,
+  pending rumours beyond the batch limit).

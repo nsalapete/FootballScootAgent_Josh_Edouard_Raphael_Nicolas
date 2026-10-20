@@ -76,6 +76,25 @@ Honest reading:
   Adamic-Adar +0.33, preferential attachment +0.13, PageRank gap -0.09. Shared trading partners and the domestic
   market carry the signal; the PageRank gap barely helps.
 
+## 4 bis. Does a FastRP embedding of clubs help? (C4: no, not kept)
+
+`python -m ml.fastrp_experiment`. The `embedding` written by `GdsService.refresh` would leak (it is computed on every
+season, label windows included), so FastRP is recomputed in numpy on each feature graph with the settings of
+`refresh` (weights 0, 1, 1, undirected, weighted by transfer counts). Pair feature: cosine of the two club embeddings.
+
+| | Validation AUC-PR (logistic regression) |
+| --- | --- |
+| Without FastRP | 0.1517 |
+| With FastRP, 9 runs (dimension 32 / 64 / 128 x seeds 1 / 2 / 42) | 0.1503 to 0.1522 |
+
+On the test set: the feature alone reaches AUC-PR 0.111 (below common neighbours, 0.126). Added to logistic
+regression it gives 0.159 instead of 0.160 and precision@100 0.28 instead of 0.31; added to gradient boosting,
+0.119 instead of 0.126.
+
+Reading: the cosine does separate the classes (mean 0.39 for new links, 0.22 for the others), but it encodes the
+same thing as common neighbours and Adamic-Adar (two clubs whose 1- and 2-hop neighbourhoods overlap), so it adds no
+new information. **Not kept**: the model stays at five features.
+
 ## 5. From scores to the graph
 
 1. The chosen model is refit on the sampled test window (most recent labels), then scores every open pair of scope

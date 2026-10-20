@@ -403,3 +403,13 @@ def test_fallback_evidence_from_nested_nodes_and_notes():
     assert "no `id` property" in tools.cypher_fallback("MATCH (p:Player) RETURN p.name LIMIT 1").data["note"]
     description = {tool.name: tool.description for tool in tools.as_langchain_tools()}["cypher_fallback"]
     assert "player_id" in description and "There is NO `id` property" in description
+
+
+def test_router_falls_back_to_the_large_model_when_the_small_one_fails():
+    def hang(_messages):
+        raise TimeoutError("small model timed out")
+
+    agent, small, large = make_agent([hang], [{"decision": "out_of_scope", "reason": "Not football."}])
+    answer = agent.ask("Tell me a joke about cooking")
+    assert answer.refused and answer.answer == "Not football."
+    assert len(small.calls) == 1 and len(large.calls) == 1

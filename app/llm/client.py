@@ -98,17 +98,25 @@ class FakeChatModel(BaseChatModel):  # pylint: disable=abstract-method
         return RunnableLambda(run)
 
 
-def _build_anthropic(model: str) -> BaseChatModel:
+# (timeout in seconds, retries) per size: a stuck small model gives up quickly so the caller can fall back.
+LIMITS = {"small": (30, 1), "large": (60, 2)}
+
+
+def _build_anthropic(model: str, size: str) -> BaseChatModel:
     """Claude through the Anthropic API."""
     from langchain_anthropic import ChatAnthropic  # pylint: disable=import-outside-toplevel
 
     settings = get_settings()
     return ChatAnthropic(
-        model=model, api_key=settings.anthropic_api_key or None, max_tokens=2048, timeout=60, max_retries=2
+        model=model,
+        api_key=settings.anthropic_api_key or None,
+        max_tokens=2048,
+        timeout=LIMITS[size][0],
+        max_retries=LIMITS[size][1],
     )
 
 
-def _build_openai_compatible(model: str) -> BaseChatModel:
+def _build_openai_compatible(model: str, size: str) -> BaseChatModel:
     """Any OpenAI-compatible endpoint (NanoGPT, a local server...) reached through `LLM_BASE_URL`."""
     from langchain_openai import ChatOpenAI  # pylint: disable=import-outside-toplevel
 
@@ -118,15 +126,15 @@ def _build_openai_compatible(model: str) -> BaseChatModel:
         base_url=settings.llm_base_url or None,
         api_key=settings.openai_api_key or None,
         temperature=0,
-        timeout=60,
-        max_retries=2,
+        timeout=LIMITS[size][0],
+        max_retries=LIMITS[size][1],
     )
 
 
-_BUILDERS: dict[str, Callable[[str], BaseChatModel]] = {
+_BUILDERS: dict[str, Callable[[str, str], BaseChatModel]] = {
     "anthropic": _build_anthropic,
     "openai_compatible": _build_openai_compatible,
-    "fake": lambda _model: FakeChatModel(),
+    "fake": lambda _model, _size: FakeChatModel(),
 }
 
 
@@ -179,4 +187,4 @@ def get_chat_model(size: ModelSize = "small"):
     if provider not in _BUILDERS:
         raise ValueError(f"Unknown LLM_PROVIDER {provider!r}: expected one of {', '.join(PROVIDERS)}")
     model = settings.llm_model_small if size == "small" else settings.llm_model_large
-    return _BUILDERS[provider](model)
+    return _BUILDERS[provider](model, size)

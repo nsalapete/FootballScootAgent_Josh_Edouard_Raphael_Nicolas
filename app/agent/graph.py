@@ -199,9 +199,7 @@ class ScoutAgent:
         names: list[str] = []
         reason = out_of_scope_reason(question)
         if reason is None:
-            decision = structured(self._small(), RouteDecision).invoke(
-                [SystemMessage(ROUTER_PROMPT), HumanMessage(question)]
-            )
+            decision = self._route(question)
             if decision.decision == "out_of_scope":
                 reason = decision.reason or "This question is outside the scope of the transfer graph."
             names = decision.entity_names
@@ -225,6 +223,15 @@ class ScoutAgent:
             final = AgentAnswer(answer=" ".join(questions), trace=trace, needs_clarification=True)
             return {"final": final, "results": results, "trace": trace}
         return {"entities": entities, "results": results, "trace": trace}
+
+    def _route(self, question: str) -> RouteDecision:
+        """Routing decision of the small model; the large model takes over if the small one fails or times out
+        (the evaluation found a question on which the small NanoGPT model hangs every time)."""
+        messages = [SystemMessage(ROUTER_PROMPT), HumanMessage(question)]
+        try:
+            return structured(self._small(), RouteDecision).invoke(messages)
+        except Exception:  # pylint: disable=broad-exception-caught
+            return structured(self._large(), RouteDecision).invoke(messages)
 
     def _planner(self, state: AgentState) -> dict[str, Any]:
         """Let the large model choose the next tool calls."""

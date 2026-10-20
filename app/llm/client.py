@@ -4,15 +4,17 @@
 OpenAI-compatible API, using `LLM_BASE_URL`) or `fake` (deterministic, no network: tests and CI).
 """
 
+import json
+import re
 from itertools import count
 from typing import Any, Callable, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, convert_to_messages
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import RunnableLambda
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.config import get_settings
 
@@ -126,6 +128,46 @@ _BUILDERS: dict[str, Callable[[str], BaseChatModel]] = {
     "openai_compatible": _build_openai_compatible,
     "fake": lambda _model: FakeChatModel(),
 }
+
+
+def structured(model: BaseChatModel, schema: type[BaseModel]):
+    """`model` constrained to return a validated `schema` object.
+
+    Claude and the fake model use LangChain's native structured output. OpenAI-compatible models get the JSON
+    schema in the prompt instead: NanoGPT models refuse both the `json_schema` response format
+    (`model_response_format_unsupported`) and forced tool calls (`tool_choice` other than `auto`).
+    """
+    if isinstance(model, FakeChatModel) or type(model).__name__ == "ChatAnthropic":
+        return model.with_structured_output(schema)
+    return RunnableLambda(lambda value: json_output(model, schema, value))
+
+
+def parse_json_object(text: str) -> Any:
+    """The JSON object of a reply, ignoring `<think>` blocks, code fences and prose around it."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end < start:
+        raise ValueError("no JSON object in the reply")
+    return json.loads(text[start : end + 1])
+
+
+def json_output(model: BaseChatModel, schema: type[BaseModel], value: Any, retries: int = 1) -> BaseModel:
+    """Ask for one JSON object matching `schema`, validate it, and retry once with the error if it is invalid."""
+    instruction = (
+        "Reply with ONE JSON object only, no prose and no code fence, valid against this JSON schema: "
+        + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+    )
+    messages: list[BaseMessage] = [*convert_to_messages(value), SystemMessage(instruction)]
+    for attempt in range(retries + 1):
+        reply = model.invoke(messages)
+        content = reply.content if isinstance(reply.content, str) else str(reply.content)
+        try:
+            return schema.model_validate(parse_json_object(content))
+        except (ValueError, ValidationError) as error:
+            if attempt == retries:
+                raise
+            messages += [reply, HumanMessage(f"Invalid answer ({str(error)[:300]}). Reply with the JSON object only.")]
+    raise RuntimeError("unreachable")
 
 
 def get_chat_model(size: ModelSize = "small"):

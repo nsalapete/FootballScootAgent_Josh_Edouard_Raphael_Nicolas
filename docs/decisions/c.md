@@ -39,3 +39,11 @@ One line per choice not settled by `CLAUDE.md`, in the order it was made.
 - **C2 · two temporal splits**: test = graph up to 2022, new pairs of 2023-2024 (the protocol of the checklist);
   train = same protocol two seasons earlier (graph up to 2020, new pairs of 2021-2022), so the model is fit and
   evaluated on disjoint label windows and no feature ever sees its own label period.
+- **C2 fix · one universe with the graph** (review of B on #11): scope clubs and cleaned transfers now come from
+  A's ingestion code (`SCOPE_*_SQL`, `TRANSFERS_SQL`, `shape_transfer`, `clean_transfers`, `parse_season`),
+  imported read-only: clubs that played a scope league game since `SCOPE_FROM_SEASON` (223), transfers with a
+  scope club on one side, from 2015, without placeholders, duplicates or future dates. Replaces the club snapshot
+  (`clubs.domestic_competition_id`) and the raw transfers since 2002.
+- **C2 fix · features on the `SENDS_TO` graph, samples among scope clubs**: the feature graph keeps light clubs
+  (1,796 clubs up to 2022), like `SENDS_TO` and the GDS PageRank; candidate pairs only join two scope clubs, the
+  only ones for which `PREDICTED_LINK` is written. Country of a scope club = country of its latest scope league.

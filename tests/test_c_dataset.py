@@ -1,6 +1,7 @@
 """ml.dataset on small synthetic data (no Neo4j, no real DuckDB file). Owner: C."""
 
 import math
+from datetime import date
 
 import duckdb
 import pandas as pd
@@ -8,12 +9,11 @@ import pytest
 
 from ml.dataset import (
     FEATURES,
+    Universe,
     build_split,
-    load_countries,
-    load_edges,
+    load_universe,
     new_pairs,
     pair_features,
-    parse_season,
     sample_negatives,
     training_graph,
 )
@@ -39,12 +39,7 @@ EDGES = pd.DataFrame(
 )
 COUNTRIES = {1: "France", 2: "France", 3: "England", 4: "England", 5: "Spain", 6: "Spain"}
 SPLIT = (2021, (2022, 2023))
-
-
-def test_parse_season():
-    assert parse_season("22/23") == 2022
-    assert parse_season("00/01") == 2000
-    assert parse_season("99/00") == 1999
+UNIVERSE = Universe(EDGES, countries=COUNTRIES)  # no scope given: every graph club is a candidate
 
 
 def test_training_graph_stops_at_the_cutoff():
@@ -59,20 +54,20 @@ def test_new_pairs():
 
 
 def test_no_leak_between_graph_and_labels():
-    split = build_split(EDGES, COUNTRIES, SPLIT)
+    split = build_split(UNIVERSE, SPLIT)
     graph = training_graph(EDGES, SPLIT[0])
     positives = split[split["label"] == 1]
     assert not any(graph.has_edge(src, dst) for src, dst in zip(positives["src"], positives["dst"]))
     # Features only depend on the past: dropping every future edge changes nothing.
-    past_only = build_split(EDGES[EDGES["season"] <= SPLIT[0]], COUNTRIES, SPLIT)
+    past_only = build_split(Universe(EDGES[EDGES["season"] <= SPLIT[0]], countries=COUNTRIES), SPLIT)
     assert past_only.empty  # no label without the future...
-    features = pair_features(training_graph(EDGES[EDGES["season"] <= SPLIT[0]], SPLIT[0]),
-                             list(zip(split["src"], split["dst"])), COUNTRIES)
+    past_graph = training_graph(EDGES[EDGES["season"] <= SPLIT[0]], SPLIT[0])
+    features = pair_features(past_graph, list(zip(split["src"], split["dst"])), COUNTRIES)
     pd.testing.assert_frame_equal(features, split.drop(columns="label"))  # ...but identical features
 
 
 def test_negatives_count_seed_and_exclusions():
-    split = build_split(EDGES, COUNTRIES, SPLIT, negatives_per_positive=5)
+    split = build_split(UNIVERSE, SPLIT, negatives_per_positive=5)
     negatives = split[split["label"] == 0]
     assert split["label"].sum() == 3
     assert len(negatives) == 15
@@ -80,7 +75,7 @@ def test_negatives_count_seed_and_exclusions():
     traded = set(zip(window["src"], window["dst"]))
     assert not traded & set(zip(negatives["src"], negatives["dst"]))
     assert all(src != dst for src, dst in zip(negatives["src"], negatives["dst"]))
-    pd.testing.assert_frame_equal(split, build_split(EDGES, COUNTRIES, SPLIT, negatives_per_positive=5))
+    pd.testing.assert_frame_equal(split, build_split(UNIVERSE, SPLIT, negatives_per_positive=5))
 
 
 def test_negatives_capped_by_free_pairs():
@@ -105,29 +100,62 @@ def test_pair_features_by_hand():
     assert list(same["same_country"]) == [1, 1]
 
 
+def test_scope_restricts_candidate_pairs():
+    # Clubs 5 and 6 are light clubs: they shape the features but never appear in a sample.
+    universe = Universe(EDGES, clubs=frozenset({1, 2, 3, 4}), countries=COUNTRIES)
+    graph = training_graph(EDGES, SPLIT[0])
+    assert new_pairs(EDGES, graph, SPLIT[1], universe.clubs) == {(1, 4), (2, 1)}
+    split = build_split(universe, SPLIT)
+    assert set(split["src"]) | set(split["dst"]) <= {1, 2, 3, 4}
+    assert split["label"].sum() == 2
+    # 4 x 3 = 12 pairs, minus 5 past edges among 1-4 and 2 window pairs (1, 4), (2, 1): 5 free pairs.
+    assert (split["label"] == 0).sum() == 5
+
+
 @pytest.fixture(name="duckdb_file")
 def duckdb_file_fixture(tmp_path):
-    """A tiny DuckDB file with the three Transfermarkt tables the dataset reads."""
+    """A tiny DuckDB file with the Transfermarkt tables read by the ingestion queries of A."""
     path = tmp_path / "mini.duckdb"
     with duckdb.connect(str(path)) as con:
         con.execute("CREATE TABLE competitions (competition_id VARCHAR, country_name VARCHAR)")
         con.execute("INSERT INTO competitions VALUES ('FR1', 'France'), ('GB1', 'England'), ('XX1', 'Elsewhere')")
-        con.execute("CREATE TABLE clubs (club_id VARCHAR, domestic_competition_id VARCHAR)")
-        con.execute("INSERT INTO clubs VALUES ('1', 'FR1'), ('2', 'FR1'), ('3', 'GB1'), ('99', 'XX1')")
+        con.execute("CREATE TABLE clubs (club_id VARCHAR, name VARCHAR)")
+        con.execute("INSERT INTO clubs VALUES ('1', 'One'), ('2', 'Two'), ('3', 'Three'), ('4', 'Four')")
         con.execute(
-            "CREATE TABLE transfers (from_club_id INTEGER, to_club_id INTEGER, transfer_season VARCHAR)"
+            "CREATE TABLE games (game_id VARCHAR, competition_id VARCHAR, season VARCHAR, home_club_id INTEGER, "
+            "away_club_id INTEGER, home_club_name VARCHAR, away_club_name VARCHAR)"
+        )
+        # Club 3 played FR1 then GB1 (country = latest league), club 5 only before the scope, club 6 elsewhere.
+        con.execute(
+            "INSERT INTO games VALUES ('1', 'FR1', '2021', 1, 2, 'One', 'Two'), ('2', 'FR1', '2020', 3, 1, "
+            "'Three', 'One'), ('3', 'GB1', '2022', 3, 4, 'Three', 'Four'), ('4', 'FR1', '2014', 5, 1, 'Five', "
+            "'One'), ('5', 'XX1', '2022', 6, 99, 'Six', 'Far')"
+        )
+        con.execute("CREATE TABLE players (player_id INTEGER)")
+        con.execute("INSERT INTO players SELECT range FROM range(10, 20)")
+        con.execute(
+            "CREATE TABLE transfers (player_id INTEGER, transfer_date DATE, transfer_season VARCHAR, "
+            "from_club_id INTEGER, to_club_id INTEGER, from_club_name VARCHAR, to_club_name VARCHAR, "
+            "transfer_fee DECIMAL(18, 3))"
         )
         con.execute(
-            "INSERT INTO transfers VALUES (1, 2, '21/22'), (1, 2, '21/22'), (2, 3, '22/23'), "
-            "(3, 99, '22/23'), (1, 1, '22/23'), (2, 1, NULL), (500, 1, '22/23')"
+            "INSERT INTO transfers VALUES "
+            "(10, '2021-07-01', '21/22', 1, 2, 'One', 'Two', 1000), "
+            "(11, '2021-08-01', '21/22', 1, 2, 'One', 'Two', 2000), "
+            "(12, '2022-07-01', '22/23', 2, 3, 'Two', 'Three', 5), "
+            "(13, '2022-07-01', '22/23', 3, 99, 'Three', 'Far', 0), "  # light club on one side: kept
+            "(14, '2022-07-01', '22/23', 5, 99, 'Five', 'Far', 0), "  # no scope club: not read
+            "(15, '2022-07-01', '22/23', 1, 515, 'One', 'Without Club', 0), "  # placeholder: dropped
+            "(16, '2014-07-01', '14/15', 2, 1, 'Two', 'One', 0), "  # before the scope: dropped
+            "(17, '2025-07-01', '25/26', 4, 1, 'Four', 'One', 0), "  # after `today`: dropped
+            "(18, '2022-07-01', '', 2, 4, 'Two', 'Four', 0)"  # unreadable season: dropped, no crash
         )
     return path
 
 
-def test_load_edges_keeps_scope_and_aggregates(duckdb_file):
-    edges = load_edges(duckdb_file, ["FR1", "GB1"])
-    assert sorted(edges.itertuples(index=False, name=None)) == [(1, 2, 2021, 2), (2, 3, 2022, 1)]
-
-
-def test_load_countries(duckdb_file):
-    assert load_countries(duckdb_file, ["FR1", "GB1"]) == {1: "France", 2: "France", 3: "England"}
+def test_load_universe_uses_the_ingestion_scope(duckdb_file):
+    universe = load_universe(duckdb_file, ["FR1", "GB1"], from_season=2015, today=date(2024, 12, 31))
+    assert universe.clubs == frozenset({1, 2, 3, 4})
+    assert universe.countries == {1: "France", 2: "France", 3: "England", 4: "England"}
+    edges = sorted(universe.edges.itertuples(index=False, name=None))
+    assert edges == [(1, 2, 2021, 2), (2, 3, 2022, 1), (3, 99, 2022, 1)]

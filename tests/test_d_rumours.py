@@ -180,7 +180,7 @@ def test_import_creates_pending_rumours(test_nodes):
     rumours = service.for_player(-4101)
     assert len(rumours) == 1
     rumour = rumours[0]
-    assert rumour.status == "pending" and rumour.club_id == -4201 and rumour.confidence == 0.4
+    assert rumour.status == "pending" and rumour.club_id == -4201 and rumour.extraction_confidence == 0.4
     assert rumour.url == "https://test-d.example/2" and rumour.published_at == date(2026, 10, 15)
     assert rumour.nature == "rumour"
     reports = test_nodes.read(

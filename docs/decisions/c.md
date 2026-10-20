@@ -75,3 +75,7 @@ One line per choice not settled by `CLAUDE.md`, in the order it was made.
   `PLAYED_WITH` relationships, local Docker): project clubs 5.2 s, PageRank 0.9 s, Louvain 2.5 s (85 communities,
   modularity 0.48), project teammates 1.1 s, FastRP 2.6 s, drops 0.3 s: 12.6 s in total, every step under 10 s but
   with little margin. `similar_players` p50 307 ms, p95 1.1 s (20 players, k = 10).
+- **C4 · FastRP feature not kept**: recomputed in numpy on each feature graph (the stored `embedding` sees every
+  season: leakage), pair feature = cosine of the club embeddings. Validation AUC-PR 0.150 to 0.152 over 9 runs
+  (3 sizes x 3 seeds) vs 0.152 without; test 0.159 vs 0.160. It duplicates the common-neighbour signal. The
+  experiment stays reproducible in `ml/fastrp_experiment.py`; the model keeps five features.

@@ -133,3 +133,12 @@ def test_similar_players_unknown_or_isolated(refreshed):
     assert not refreshed[0].similar_players(-424242, k=5)
     # Samuel Okafor (16) has no teammate: zero embedding, cosine undefined, so no neighbour.
     assert not refreshed[0].similar_players(16, k=5)
+
+
+@pytest.mark.neo4j
+def test_predicted_moves_on_the_mini_graph(neo4j_db):
+    moves = GdsService(neo4j_db).predicted_moves(9)
+    assert [(move.club_id, move.club_name, move.probability) for move in moves] == [(5, "Harrowgate FC", 0.42)]
+    assert moves[0].nature == "predicted" and moves[0].model_version == "fixture"
+    assert not GdsService(neo4j_db).predicted_moves(1)
+    assert not GdsService(neo4j_db).predicted_moves(9, limit=1)[1:]

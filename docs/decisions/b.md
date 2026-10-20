@@ -57,3 +57,9 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
   (`workflow_dispatch`).
 - **B5 · pas d'attente des tests** : publication sur push vers `main`, comme demandé ; `main` ne reçoit que des PR dont la
   CI est verte.
+- **B6 · diagrammes** : `docs/architecture.drawio` (XML non compressé, lisible dans un diff, généré à partir d'une liste
+  de boîtes et de flèches) et version Mermaid dans `docs/architecture.md`, rendue par GitHub sans outil ; la version
+  Mermaid regroupe LLM et flux RSS en « services externes » pour rester lisible.
+- **B6 · exemples `curl`** : exécutés sur le mini-graphe (ids fictifs, réponses copiées telles quelles) plutôt que des
+  ids Transfermarkt non vérifiables sans le fichier DuckDB ; pour l'agent et le recalcul GDS, forme de la réponse
+  seulement, signalée comme telle.

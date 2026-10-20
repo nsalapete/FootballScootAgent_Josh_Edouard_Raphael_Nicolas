@@ -22,7 +22,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from app.agent.evidence import GraphEvidence, number_is_supported, numbers_in_data, numbers_in_text
-from app.agent.tools import ToolBox, ToolResult
+from app.agent.tools import ToolBox, ToolResult, failure
 from app.llm.client import get_chat_model
 from app.models.agent import AgentAnswer, Claim, Nature, ToolCall
 
@@ -255,7 +255,7 @@ class ScoutAgent:
         for call in state["messages"][-1].tool_calls:
             arguments = call.get("args", {})
             if used >= MAX_TOOL_CALLS:
-                result = ToolResult(tool=call["name"], error=f"tool budget of {MAX_TOOL_CALLS} calls exhausted")
+                result = failure(call["name"], f"tool budget of {MAX_TOOL_CALLS} calls exhausted")
             else:
                 result = self.tools.run(call["name"], arguments)
                 used += 1

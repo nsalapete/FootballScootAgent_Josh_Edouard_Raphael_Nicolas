@@ -26,6 +26,9 @@ from app.services.rumours import RumourService
 
 MAX_RESULT_CHARS = 4000
 
+# Nature of what each hypothesis tool states; every other tool states verified facts.
+TOOL_NATURES: dict[str, Nature] = {"predicted_moves": "predicted", "rumours": "rumour"}
+
 # Keys of fallback rows that identify a node, and the label they prove.
 ID_KEYS = {
     "player_id": "Player",
@@ -110,6 +113,11 @@ class CypherArgs(BaseModel):
     """Arguments of `cypher_fallback`."""
 
     query: str = Field(description="One read-only Cypher query with a LIMIT of at most 100")
+
+
+def failure(tool: str, error: str, data: Any = None) -> ToolResult:
+    """A failed call, labelled with the nature of its tool so that a failed hypothesis tool never reads `verified`."""
+    return ToolResult(tool=tool, nature=TOOL_NATURES.get(tool, "verified"), data=data, error=error)
 
 
 def age_on(birth: date | None, today: date) -> int | None:
@@ -214,7 +222,7 @@ class ToolBox:
         """Last resort: validated read-only Cypher, run in a read transaction."""
         check = self.validator.validate(query)
         if not check.valid:
-            return ToolResult(tool="cypher_fallback", data={"query": query}, error="; ".join(check.reasons))
+            return failure("cypher_fallback", "; ".join(check.reasons), data={"query": query})
         rows = self.players.client.read(check.query)
         nature: Nature = "verified"
         if re.search(r"\bRumour\b|\bArticle\b", check.query):
@@ -264,15 +272,15 @@ class ToolBox:
         """Validate the arguments and run one tool; errors come back inside the result, never raised."""
         spec = self.specs().get(name)
         if spec is None:
-            return ToolResult(tool=name, error=f"unknown tool {name!r}")
+            return failure(name, f"unknown tool {name!r}")
         method, schema, _ = spec
         try:
             parsed = schema.model_validate(arguments or {})
             return method(**parsed.model_dump())
         except NotImplementedError:
-            return ToolResult(tool=name, error="this service is not implemented yet")
+            return failure(name, "this service is not implemented yet")
         except Exception as error:  # pylint: disable=broad-exception-caught
-            return ToolResult(tool=name, error=f"{type(error).__name__}: {error}"[:300])
+            return failure(name, f"{type(error).__name__}: {error}"[:300])
 
     def as_langchain_tools(self) -> list[StructuredTool]:
         """Tool definitions to bind to the planner model (execution goes through `run`)."""

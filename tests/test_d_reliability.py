@@ -110,3 +110,24 @@ def test_displayed_confidence_weights_extraction_by_source_reliability(neo4j_db)
         )
     finally:
         neo4j_db.write(CLEANUP)
+
+
+class _Broken:
+    """Services whose every method fails."""
+
+    def predicted_moves(self, player_id, limit=5):
+        """Not implemented yet."""
+        raise NotImplementedError
+
+    def for_player(self, player_id, status=None):
+        """Database down."""
+        raise ConnectionError("down")
+
+
+def test_failed_hypothesis_tools_keep_their_nature():
+    tools = ToolBox(_Unused(), _Unused(), _Broken(), _Broken())
+    predicted, rumour = tools.run("predicted_moves", {"player_id": 9}), tools.run("rumours", {"player_id": 5})
+    assert predicted.error and predicted.nature == "predicted"
+    assert rumour.error and rumour.nature == "rumour"
+    assert tools.run("cypher_fallback", {"query": "MATCH (n) DELETE n"}).nature == "verified"
+    assert tools.run("unknown_tool", {}).nature == "verified"

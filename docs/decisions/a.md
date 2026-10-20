@@ -99,3 +99,23 @@ Findings that shape the ingestion:
   created (the test database shares the mini graph).
 - **Report** printed at the end of every ingestion (`Data quality` block): raw, dropped per reason, kept, loans,
   unknown and zero fees, players without club.
+
+## A4 · rumour confirmation (`scripts/confirm_rumours.py`)
+
+- **Rumour date**: earliest `published_at` of the articles that report it; if none has a date, the day of
+  `extracted_at`; if neither exists, the rumour stays `pending` (nothing to measure a window from).
+- **Windows**: inclusive, counted in days from the rumour date: a move on day 0 to day 180 counts, the rumour expires
+  from day 366 on. Only moves up to `today` count (a move dated later is not known yet).
+- **Confirmed wins over contradicted**: if the player moves elsewhere then to the target within 180 days, the rumour
+  came true; `CONFIRMED_BY` points to the first move to the target.
+- **Contradicted** as soon as a move to another club happens in the window, even before 180 days have passed;
+  loans count as moves (a loan elsewhere means the reported deal did not happen).
+- **Only `pending` rumours** are read and the write re-checks `status = 'pending'`: a decision is never overwritten,
+  the job can run after every ingestion. `MERGE` on `CONFIRMED_BY` keeps a re-run from duplicating the link.
+- **New property** `Rumour.resolved_on` (date of the decision), added to `docs/schema.md` (add-only change).
+- **Two constant queries** (all pending rumours, or `r.rumour_id IN $rumour_ids`) rather than
+  `$rumour_ids IS NULL OR ...`; `MATCH (r:Rumour {status: 'pending'})` uses the `rumour_status` index.
+- **Tests** only pass their own `test-a-` rumour ids: called without `rumour_ids`, the job would turn r1 of the mini
+  graph (2024 article, no transfer) into `expired` and break D's tests. A test checks r1 and r2 stay as they are.
+- **Real graph** (no rumour imported yet): a demo rumour "Mbappé to Real Madrid" dated 2024-02-15 was confirmed by the
+  PSG -> Real Madrid transfer of 2024-07-01 (day 137), then deleted.

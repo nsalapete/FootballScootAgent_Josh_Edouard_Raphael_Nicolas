@@ -22,6 +22,10 @@ class RumourOut(BaseModel):
     published_at: date | None = None
     quote: str | None = None
     nature: Literal["rumour"] = "rumour"
+    extraction_confidence: float | None = Field(None, ge=0, le=1, description="Confidence given by the extraction")
+    source_reliability: float | None = Field(
+        None, ge=0, le=1, description="Smoothed share of the source's decided rumours that were confirmed"
+    )
 
 
 class ImportRequest(BaseModel):

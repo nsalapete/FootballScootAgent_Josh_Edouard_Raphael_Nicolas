@@ -32,6 +32,10 @@ DEFAULT_FEEDS = [
 ]
 MAX_TEXT_CHARS = 4000
 MAX_RUMOURS_PER_PLAYER = 100
+# Weight of the prior in the source reliability: a source needs about this many decided rumours to speak for itself.
+PRIOR_WEIGHT = 5
+DEFAULT_PRIOR = 0.5
+DECIDED = ["confirmed", "contradicted", "expired"]
 
 _FOR_PLAYER = """
 MATCH (r:Rumour)-[:ABOUT]->(p:Player {player_id: $player_id})
@@ -47,6 +51,23 @@ RETURN r.rumour_id AS rumour_id, p.player_id AS player_id, c.club_id AS club_id,
        coalesce(a.url, '') AS url, published AS published_at, r.quote AS quote
 ORDER BY published IS NULL, published DESC, rumour_id
 LIMIT $limit
+"""
+
+# Per source: rumours it reported that are confirmed, and that are decided (no longer pending).
+_SOURCE_STATS = """
+UNWIND $sources AS source
+OPTIONAL MATCH (a:Article {source: source})-[:REPORTS]->(r:Rumour)
+WITH source, collect(DISTINCT r) AS rumours
+RETURN source,
+       size([r IN rumours WHERE r.status = 'confirmed']) AS confirmed,
+       size([r IN rumours WHERE r.status IN $decided]) AS decided
+LIMIT 1000
+"""
+
+# All sources together: the prior a source starts from before it has a track record.
+_GLOBAL_STATS = """
+MATCH (r:Rumour) WHERE r.status IN $decided
+RETURN count(CASE WHEN r.status = 'confirmed' THEN 1 END) AS confirmed, count(r) AS decided
 """
 
 _EXISTING_URLS = "UNWIND $urls AS url MATCH (a:Article {url: url}) RETURN url LIMIT 1000"
@@ -206,6 +227,15 @@ def quote_in_text(quote: str, text: str) -> bool:
     return bool(needle) and needle in normalise(text)
 
 
+def smoothed_reliability(confirmed: int, decided: int, prior: float, weight: float = PRIOR_WEIGHT) -> float:
+    """Share of confirmed rumours among decided ones, pulled towards `prior` for sources with few decided rumours.
+
+    `(confirmed + weight * prior) / (decided + weight)`: a new source gets `prior`, a source with 1 confirmed out of 1
+    is not trusted blindly, and a large source converges to its own confirmation rate.
+    """
+    return (confirmed + weight * prior) / (decided + weight)
+
+
 def rumour_id_for(url: str, player_id: int, club_id: int) -> str:
     """Stable id, so that importing the same article twice cannot duplicate a rumour."""
     digest = hashlib.sha1(f"{url}|{player_id}|{club_id}".encode()).hexdigest()[:16]
@@ -226,7 +256,28 @@ class RumourService:
         rows = self.client.read(
             _FOR_PLAYER, {"player_id": player_id, "status": status, "limit": MAX_RUMOURS_PER_PLAYER}
         )
-        return [RumourOut(**{**row, "published_at": _native(row["published_at"])}) for row in rows]
+        reliability = self.source_reliability(sorted({row["source"] for row in rows})) if rows else {}
+        rumours = []
+        for row in rows:
+            extraction = row["confidence"]
+            trust = reliability.get(row["source"], DEFAULT_PRIOR)
+            fields = {
+                **row,
+                "published_at": _native(row["published_at"]),
+                "confidence": round(extraction * trust, 3),
+                "extraction_confidence": extraction,
+                "source_reliability": round(trust, 3),
+            }
+            rumours.append(RumourOut(**fields))
+        return rumours
+
+    def source_reliability(self, sources: list[str]) -> dict[str, float]:
+        """Smoothed reliability of each source (see `smoothed_reliability`), with the global rate as prior."""
+        overall = self.client.read(_GLOBAL_STATS, {"decided": DECIDED})
+        decided = overall[0]["decided"] if overall else 0
+        prior = overall[0]["confirmed"] / decided if decided else DEFAULT_PRIOR
+        rows = self.client.read(_SOURCE_STATS, {"sources": sources, "decided": DECIDED})
+        return {row["source"]: smoothed_reliability(row["confirmed"], row["decided"], prior) for row in rows}
 
     def import_articles(self, request: ImportRequest) -> ImportReport:
         """Fetch articles, extract rumours with the small LLM, resolve names and store them as `pending`."""

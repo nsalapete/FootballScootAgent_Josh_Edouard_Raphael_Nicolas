@@ -22,3 +22,5 @@ One line per choice that the shared rules did not settle.
 - D4: a new article about a player/club pair that already has a `pending` rumour is attached to it (`REPORTS`) instead of creating a duplicate; A's confirmation job then dates the rumour from its earliest article.
 - D4: an article whose extraction fails is not stored, so the next import retries it; articles without rumours are stored, so they are never paid for twice.
 - D4: `RumourService.fetcher` and `.model` are attributes set in `__init__` (the constructor signature is frozen), replaced by fakes in tests.
+- D5: displayed confidence = extraction confidence × source reliability, with reliability = (confirmed + 5 × prior) / (decided + 5), decided = confirmed + contradicted + expired; the prior is the global confirmation rate (0.5 while nothing is decided). Raw values stay visible as `extraction_confidence` and `source_reliability`.
+- D5: reliability is computed at read time (two small aggregate queries per `for_player` call) rather than stored, so it follows A's confirmation job without any write-back.

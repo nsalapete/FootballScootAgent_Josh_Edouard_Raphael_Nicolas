@@ -146,6 +146,35 @@ Cost: two small aggregate queries per `for_player` call (one over the decided ru
 | Raw confirmation rate per source | 1/1 = 100 %; unstable for small sources |
 | Storing reliability on `Article` | must be recomputed after every confirmation run |
 
+## 5. Evaluation and guardrail demo (`docs/agent_eval.md`, `docs/guardrails.md`)
+
+**Figures to know.** The evaluation has 40 questions on the mini graph: 30 answerable, 10 traps. It ran with
+NanoGPT (minimax-m3.1-flash small, mimo-v2.6-pro large).
+
+| | Run 1 | Run 2 |
+| --- | --- | --- |
+| Correct | 26 / 40 | **39 / 40** |
+| Traps | 10 / 10 | 10 / 10 |
+| Claims removed | 34 | 5 |
+| Generated Cypher calls / rejected | 45 / 5 | 21 / 2 |
+| Mean latency | 49 s | 40 s |
+| Cost | $0.12 | $0.11 |
+
+**What the evaluation taught us** (be ready to tell it as a story: it shows the guardrails doing their job):
+1. NanoGPT models refuse LangChain's structured output (both `json_schema` and forced tool calls). We switched to a
+   JSON schema in the prompt + Pydantic validation + one retry (`app/llm/client.structured`).
+2. Run 1 failed every question that needed generated Cypher. The model guessed `p.id` instead of `player_id`, and
+   when it found the data, its rows had no ids, so the verifier removed the claims. The verifier was right: no
+   unverifiable claim reached the user, but the answer was incomplete. Giving the schema to the tool and asking for
+   id columns fixed 12 of 13.
+3. The small model hung on one question every time. The router now falls back to the large model.
+4. While preparing the demo, real `curl` calls revealed a verifier false positive: driver `Date` objects were
+   ignored, so a correct date was removed. Fixed in PR #30.
+
+**Why a rejected output in the demo is good news.** In the demo, the validator rejects a generated query without
+`LIMIT`, and the model fixes it. The verifier also forces the fee difference to be computed by the query instead of
+the model. Three guardrails show up in one trace.
+
 ## Likely questions
 
 - *Can a string literal fool the validator?* No: strings and comments are blanked before any rule runs

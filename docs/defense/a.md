@@ -3,14 +3,16 @@
 Goal: defend every line of role A without having written it. One-line choices are in `docs/decisions/a.md`;
 this sheet gives the why, the rejected alternatives, the cost and the likely questions.
 
-## 1. What is delivered (session 1: Monday 19 and Tuesday 20)
+## 1. What is delivered (sessions 1 and 2: Monday 19 and Tuesday 20)
 
 | Task | Content | Files |
 | --- | --- | --- |
 | A1 | DuckDB to Neo4j ingestion of the facts: countries, competitions, clubs, players, transfers, valuations | `scripts/seed_data.py`, `scripts/country_codes.py`, `tests/test_a_ingest.py` |
 | A2 | Derived relationships at the end of the ingestion: `PLAYED_WITH` (aggregated in DuckDB), `SENDS_TO` (aggregated in Cypher) | same files |
+| A3 | Data quality: loan rule, placeholders, duplicates, future transfers, pruning, report | `scripts/data_quality.py`, `tests/test_a_quality.py` |
+| A4 | Rumour confirmation job: `confirmed` / `contradicted` / `expired`, `CONFIRMED_BY` | `scripts/confirm_rumours.py`, `tests/test_a_rumours.py` |
 
-Still to do: A3 (loans, missing fees, pseudo clubs, data-quality report), A4 (`confirm_rumours`), A5 (`docs/modeling.md`).
+Still to do: A5 (`docs/modeling.md`, schema diagram, data sources), then the reviews and the presentation.
 
 ## 2. The pipeline in one picture
 
@@ -107,36 +109,75 @@ Neo4j caches one plan per statement instead of compiling a new query per batch.
 - **`transfer_id`** = first 16 hex digits of sha1(`player|date|from|to`): stable across runs, so `MERGE` finds the
   same node. 64 bits: collision probability for 36 k transfers about 10^-11.
 
-## 9. How a rumour becomes a fact (A4, Wednesday)
+## 9. Data quality (A3)
 
-A `Rumour` stays a hypothesis until `confirm_rumours` finds a `Transfer` of the same player to the target club
-within 180 days after the article: then `status = confirmed` and `(:Rumour)-[:CONFIRMED_BY]->(:Transfer)`.
-The rumour node is never turned into a transfer: the fact comes from Transfermarkt, the rumour only points to it.
+transfermarkt-datasets has **no loan column**, and loans are half of the moves of big clubs. Rule:
 
-## 10. Real numbers of the ingestion
+> X -> Y, then the same player Y -> X within 760 days with no fee (0 or unknown) = a loan; both legs are flagged.
 
-Run of 2026-10-19 on the real file (7 leagues from 2015), local Neo4j 5 in Docker (2 GB heap).
+| Case checked by hand | Before the fix | After |
+| --- | --- | --- |
+| Mbappé Monaco -> PSG 2017 (loan), 2018 (180 M purchase) | loan, purchase | loan, purchase |
+| Lukaku Inter -> Chelsea 2021 (113 M), then Chelsea -> Inter 2022 and back | 113 M flagged as loan | only the 2022-2023 move is a loan |
+| Morata Chelsea -> Atlético 2019-2020 (18 months), Atlético -> Juventus 2020-2022 (2 years) | missed | loans |
+
+Two lessons: pairs must be matched **from the latest move backwards** (a return closes only one loan), and the window
+must cover two seasons (returns peak at 5-6, 10-12, 17-18 and 22-24 months). Known limits: an ongoing loan with no
+return recorded yet, and a loan converted into a purchase without an "end of loan" record, are not detected.
+
+Other rules, in order (first match wins), with the real counts on the scope:
+
+| Rule | Why | Real file |
+| --- | --- | --- |
+| Season before 2015 or missing | outside the scope | 5,005 |
+| Dated after the ingestion day | Transfermarkt lists planned ends of loan up to 2030: not facts yet | 24 |
+| Same club on both sides | meaningless edge | 0 (8 in the whole file) |
+| Placeholder club (Without Club, Unknown, Retired, Career break) | not a club; "Without Club" would be the top hub of PageRank | 1,088 |
+| Same route within 30 days | one move recorded twice; keep the known, highest fee | 11 |
+
+Unknown fees stay `null` (4,270 kept transfers): replacing them by 0 or by the market value would invent a fact.
+A re-run deletes what an older run loaded before a rule excluded it (1,123 transfers on the first run with A3).
+
+## 10. How a rumour becomes a fact (A4)
+
+A `Rumour` stays a hypothesis until the job finds what really happened, in the `Transfer` facts:
+
+| Within 180 days after the article | After 365 days | Status |
+| --- | --- | --- |
+| the player moves to the target club | | `confirmed` + `(:Rumour)-[:CONFIRMED_BY]->(:Transfer)` |
+| he moves elsewhere, never to the target | | `contradicted` |
+| no move | no move | `expired` |
+| no move | not yet | stays `pending` |
+
+The rumour node is never turned into a transfer: the fact comes from Transfermarkt, the rumour only points to it,
+so the three levels of truth stay separate. The job only reads `pending` rumours (index `rumour_status`) and its
+write re-checks the status, so a decision is never overwritten and it can run after every ingestion.
+Demo on the real graph: "Mbappé to Real Madrid" dated 2024-02-15 is confirmed by PSG -> Real Madrid on 2024-07-01.
+
+## 11. Real numbers of the ingestion
+
+Run of 2026-10-20 on the real file (7 leagues from 2015, with the A3 rules), clean local Neo4j 5 (2 GB heap).
 
 | Nodes | Count | Relationships | Count |
 | --- | --- | --- | --- |
-| `Player` | 17,861 | `PLAYED_WITH` | 359,707 |
-| `Club` | 2,237 (223 scope + 2,014 light) | `HAS_VALUATION` | 251,081 |
-| `Transfer` | 35,867 | `MADE`, `FROM`, `TO` | 35,867 each |
-| `Valuation` | 251,081 | `SENDS_TO` | 23,115 |
-| `Country` | 167 | `PLAYS_FOR` | 17,861 |
-| `Competition` | 7 | `CITIZEN_OF` | 17,723 (138 players without nationality) |
+| `Player` | 17,856 | `PLAYED_WITH` | 359,707 |
+| `Club` | 2,232 (223 scope + 2,009 light) | `HAS_VALUATION` | 250,988 |
+| `Transfer` | 34,744 (17,833 loans) | `MADE`, `FROM`, `TO` | 34,744 each |
+| `Valuation` | 250,988 | `SENDS_TO` | 22,713 |
+| `Country` | 166 | `PLAYS_FOR` | 17,850 (6 players without club) |
+| `Competition` | 7 | `CITIZEN_OF` | 17,718 (138 players without nationality) |
 | | | `PLAYS_IN` | 1,468 |
 | | | `IN_COUNTRY` | 7 |
 
-Duration: extraction 3.3 s (DuckDB), facts 33.7 s, derived relationships 48.6 s, **1 min 28 s** in total.
-A second run on the same file gives exactly the same counts (idempotence checked on real data), in 55 s.
+Duration: extraction 3.8 s (DuckDB), facts 39 s, derived relationships 27 s, **1 min 12 s** in total on an empty
+database; a second run gives exactly the same counts (idempotence checked on real data).
 
 Two figures worth knowing for the defense:
-- 52% of the outgoing transfers of scope clubs (12,001 of 23,230) go to a club with no `PLAYS_IN` that season
-  (lower or foreign league, "Without Club"): they are in the graph but not in the per-competition pipeline of B.
+- 52% of the outgoing transfers of scope clubs go to a club with no `PLAYS_IN` that season (lower or foreign league):
+  they are in the graph but not in the per-competition pipeline of B (measured before A3).
 - Sanity check: `shortestPath` between Messi and Cristiano Ronaldo is 2 hops (both played with Arthur Melo).
 
-## 11. Likely questions
+## 12. Likely questions
 
 - **Is the ingestion idempotent?** Yes: `MERGE` on unique keys, `SET` for properties, outdated `PLAYS_FOR` /
   `CITIZEN_OF` replaced, `SENDS_TO` rebuilt per club. A test runs it twice and compares every count; a second run on
@@ -149,3 +190,10 @@ Two figures worth knowing for the defense:
   the graph: computing it in Cypher guarantees it matches them, and lets a test rebuild only its own clubs.
 - **How do the tests avoid breaking the mini graph?** Negative ids and `test-a-` codes only, deleted at the end; a
   test checks that the 12 `SENDS_TO` of the mini graph are untouched when `build_sends_to` runs on a test club.
+- **Why not use the market value as the fee when it is unknown?** It is an estimate of the player, not a price paid;
+  the agent would present an invented amount as a fact. `null` is honest, and sums skip it.
+- **Why flag both legs of a loan?** The end of a loan is a move too (it appears in `SENDS_TO`); flagging it lets a
+  query exclude loans entirely with `WHERE NOT t.is_loan`.
+- **What if a rumour cites the right club but the move is a loan?** It is confirmed: the reported deal happened.
+- **Why 180 and 365 days?** Given by the team contract: one transfer window and a half for the deal, one year
+  before a rumour is considered dead.

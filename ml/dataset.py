@@ -187,6 +187,26 @@ def build_split(
     return frame
 
 
+def open_pairs(graph: nx.DiGraph, clubs: frozenset[int] = frozenset()) -> list[tuple[int, int]]:
+    """Every directed pair of candidate clubs that is not an edge of `graph`: what a model has to rank."""
+    nodes = sorted(candidate_clubs(graph, clubs))
+    return [(src, dst) for src in nodes for dst in nodes if src != dst and not graph.has_edge(src, dst)]
+
+
+def build_full_split(universe: Universe, split: tuple[int, tuple[int, ...]]) -> pd.DataFrame:
+    """Every open pair at `train_until`, labelled 1 when it trades during the target seasons (no sampling).
+
+    This is the realistic evaluation set: about 3.5 % positives instead of 1 in 6 in the sampled splits.
+    """
+    train_until, target_seasons = split
+    graph = training_graph(universe.edges, train_until)
+    positives = new_pairs(universe.edges, graph, target_seasons, universe.clubs)
+    pairs = open_pairs(graph, universe.clubs)
+    frame = pair_features(graph, pairs, universe.countries)
+    frame["label"] = [int(pair in positives) for pair in pairs]
+    return frame
+
+
 def load_splits(universe: Universe | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(train, test) frames: train = graph up to 2020 and new pairs of 2021-2022, test = the official split."""
     universe = universe or load_universe()

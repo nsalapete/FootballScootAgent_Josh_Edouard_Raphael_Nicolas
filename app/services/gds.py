@@ -107,6 +107,14 @@ ORDER BY similarity DESC, player_id
 LIMIT $k
 """
 
+PREDICTED_MOVES = """
+MATCH (p:Player {player_id: $player_id})-[m:PREDICTED_MOVE]->(c:Club)
+RETURN p.player_id AS player_id, c.club_id AS club_id, c.name AS club_name, m.prob AS probability,
+       m.model_version AS model_version
+ORDER BY probability DESC, club_id
+LIMIT $limit
+"""
+
 
 class GdsService:
     """In-memory projections, graph algorithms and stored predictions."""
@@ -157,4 +165,5 @@ class GdsService:
 
     def predicted_moves(self, player_id: int, limit: int = 5) -> list[PredictedMove]:
         """Stored `PREDICTED_MOVE` relations of a player, highest probability first."""
-        raise NotImplementedError
+        rows = self.client.read(PREDICTED_MOVES, {"player_id": player_id, "limit": limit})
+        return [PredictedMove(**row) for row in rows]

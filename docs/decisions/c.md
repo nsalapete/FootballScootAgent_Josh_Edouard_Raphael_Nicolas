@@ -47,6 +47,24 @@ One line per choice not settled by `CLAUDE.md`, in the order it was made.
 - **C2 fix · features on the `SENDS_TO` graph, samples among scope clubs**: the feature graph keeps light clubs
   (1,796 clubs up to 2022), like `SENDS_TO` and the GDS PageRank; candidate pairs only join two scope clubs, the
   only ones for which `PREDICTED_LINK` is written. Country of a scope club = country of its latest scope league.
+- **C3 · evaluation on every open pair** of the test window (43,442 pairs, 3.6 % positives), not on the 1:5 sample:
+  AUC-PR and precision@k depend on the share of positives, the sample would inflate them.
+- **C3 · temporal model selection**: fit on graph up to 2018 / labels 2019-2020, validate on the full window graph
+  up to 2020 / labels 2021-2022. Replaces 5-fold random CV, which chose gradient boosting, worse on later seasons.
+- **C3 · baseline** = raw common-neighbour count; ties in precision@k broken by input order (stable sort).
+- **C3 · logistic regression on log1p features**, standardised (degree products are heavy-tailed); gradient boosting
+  with scikit-learn defaults and seed 42.
+- **C3 · final model** refit on the most recent labelled window (sampled test split), scoring the graph of every
+  known season.
+- **C3 · probability correction** for the 1:5 sampling: odds multiplied by (real rate / (1 - real rate)) /
+  (1/6 / 5/6), real rate = 3.6 % measured on the full test window. Ranking unchanged, values honest.
+- **C3 · `PREDICTED_LINK`** = 5 best destinations per scope club (about 1,100 links), so every club has some;
+  written with `MATCH` on both clubs, batches of 5,000, own client with a 600 s timeout (like the ingestion).
+- **C3 · `PREDICTED_MOVE`** = 3 best links of the player's current club, probability = probability of the pair
+  (club-level score, documented in `docs/ml_report.md`).
+- **C3 · versions** `lp-<model>-<yyyymmdd>`; a run deletes older `lp-` predictions (by batches of 10,000), never
+  other versions such as the `fixture` ones of the test graph.
+- **C3 · `predicted_moves`**: reads the stored relations, `ORDER BY probability DESC, club_id LIMIT $limit`.
 - **C1 fix · drops** (review of B on #10): each projection drop has its own `try/except (Neo4jError, DriverError)`
   and logs a warning, so both drops are attempted and the caller sees the algorithm's error. `ServiceUnavailable`
   is a `DriverError`, not a `Neo4jError`: catching only the latter would miss a lost connection.

@@ -50,3 +50,10 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
   (arrière-plan, pour les tests de conteneurs) et `docker-logs`, `make help` complet.
 - **B4 · tests de conteneurs** : ignorés si rien ne répond sur `http://localhost/api/health` (CI) ; `STACK_URL` pour
   viser une autre adresse.
+- **B5 · publication de l'image** : `docker/metadata-action` calcule les étiquettes (`latest` sur `main`, `sha-<commit>`,
+  et le tag git `v*` pour l'image du rendu) et les labels OCI, dont `org.opencontainers.image.source` qui rattache le
+  paquet GHCR au dépôt ; nom de l'image passé en minuscules en shell (`${GITHUB_REPOSITORY_OWNER,,}`) ; cache de build
+  GitHub Actions ; `concurrency` annule une publication devenue obsolète. Déclenchement aussi manuel
+  (`workflow_dispatch`).
+- **B5 · pas d'attente des tests** : publication sur push vers `main`, comme demandé ; `main` ne reçoit que des PR dont la
+  CI est verte.

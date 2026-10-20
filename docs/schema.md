@@ -22,7 +22,7 @@ un label, une relation ou une propriété listés ici sans prévenir toute l'éq
 | `Transfer` | `transfer_id` (str : hash joueur + date + origine + destination) | `date` (date), `season` (int, année de début), `fee_eur` (int ou null), `is_loan` (bool) |
 | `Valuation` | `valuation_id` (str : `<player_id>-<date>`) | `date` (date), `value_eur` (int) |
 | `Article` | `url` | `source`, `title`, `published_at` (date) |
-| `Rumour` | `rumour_id` (str) | `status` (pending, confirmed, expired, contradicted), `confidence` (0 à 1), `quote` (phrase source), `extracted_at` (datetime) |
+| `Rumour` | `rumour_id` (str) | `status` (pending, confirmed, expired, contradicted), `confidence` (0 à 1), `quote` (phrase source), `extracted_at` (datetime) ; écrite par A : `resolved_on` (date où le statut a quitté `pending`) |
 
 ## Relations
 

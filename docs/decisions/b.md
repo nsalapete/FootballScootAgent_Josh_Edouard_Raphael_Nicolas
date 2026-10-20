@@ -48,3 +48,20 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
 - **B3 · code 422** : `HTTPStatus.UNPROCESSABLE_ENTITY` (bibliothèque standard) plutôt que la constante Starlette,
   renommée dans Starlette 1.x et absente des versions plus anciennes.
 - **B3 · limites de taille** : `name` de 1 à 100 caractères, `limit` de résolution de 1 à 20.
+- **B4 · healthcheck Neo4j** : identifiants substitués par Compose (`${NEO4J_PASSWORD}`) et non par le shell du conteneur
+  (`$${...}`), où la variable n'existe pas : avec un autre mot de passe que celui par défaut, Neo4j restait « unhealthy »
+  et l'API ne démarrait jamais. Pas de `NEO4J_PASSWORD` dans l'environnement du conteneur Neo4j : l'image transforme
+  toute variable `NEO4J_*` en réglage et refuserait de démarrer.
+- **B4 · exposition** : seul le proxy publie un port (80) ; l'API n'a qu'un `expose` ; Neo4j (7474, 7687) n'est publié
+  que sur `127.0.0.1` pour les développeurs. `restart: unless-stopped` sauf `ingest` (exécution unique).
+- **B4 · nginx** : 20 req/s par IP (rafale 40) en général, 10 req/min (rafale 5) pour l'agent, l'admin GDS et l'import
+  de rumeurs, 429 au-delà ; délai de 120 s (600 s pour admin et import) ; corps 1 Mo ; `server_tokens off` et en-têtes
+  `nosniff`, `DENY`, `no-referrer`.
+- **B4 · uvicorn** : `--proxy-headers --forwarded-allow-ips *` pour lire la vraie IP cliente dans `X-Forwarded-For` ;
+  acceptable car le port 8000 n'est joignable que depuis le réseau Compose.
+- **B4 · `.dockerignore`** (nouveau, fichier Docker donc rôle B) : sans lui, le contexte de build embarquait `.venv`,
+  `data/` (fichier DuckDB de plusieurs Go) et `.env`.
+- **B4 · Makefile** : chemins du virtualenv selon l'OS (`Scripts/` et `python` sous Windows), cibles `docker-up`
+  (arrière-plan, pour les tests de conteneurs) et `docker-logs`, `make help` complet.
+- **B4 · tests de conteneurs** : ignorés si rien ne répond sur `http://localhost/api/health` (CI) ; `STACK_URL` pour
+  viser une autre adresse.

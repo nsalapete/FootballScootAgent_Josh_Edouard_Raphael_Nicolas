@@ -17,4 +17,5 @@ RUN useradd --create-home appuser && mkdir -p /app/data && chown -R appuser /app
 USER appuser
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Behind nginx: trust its X-Forwarded-* headers (the API port is only reachable inside the Compose network).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

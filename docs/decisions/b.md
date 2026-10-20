@@ -50,3 +50,16 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
   (arrière-plan, pour les tests de conteneurs) et `docker-logs`, `make help` complet.
 - **B4 · tests de conteneurs** : ignorés si rien ne répond sur `http://localhost/api/health` (CI) ; `STACK_URL` pour
   viser une autre adresse.
+- **B5 · publication de l'image** : `docker/metadata-action` calcule les étiquettes (`latest` sur `main`, `sha-<commit>`,
+  et le tag git `v*` pour l'image du rendu) et les labels OCI, dont `org.opencontainers.image.source` qui rattache le
+  paquet GHCR au dépôt ; nom de l'image passé en minuscules en shell (`${GITHUB_REPOSITORY_OWNER,,}`) ; cache de build
+  GitHub Actions ; `concurrency` annule une publication devenue obsolète. Déclenchement aussi manuel
+  (`workflow_dispatch`).
+- **B5 · pas d'attente des tests** : publication sur push vers `main`, comme demandé ; `main` ne reçoit que des PR dont la
+  CI est verte.
+- **B6 · diagrammes** : `docs/architecture.drawio` (XML non compressé, lisible dans un diff, généré à partir d'une liste
+  de boîtes et de flèches) et version Mermaid dans `docs/architecture.md`, rendue par GitHub sans outil ; la version
+  Mermaid regroupe LLM et flux RSS en « services externes » pour rester lisible.
+- **B6 · exemples `curl`** : exécutés sur le mini-graphe (ids fictifs, réponses copiées telles quelles) plutôt que des
+  ids Transfermarkt non vérifiables sans le fichier DuckDB ; pour l'agent et le recalcul GDS, forme de la réponse
+  seulement, signalée comme telle.

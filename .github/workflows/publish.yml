@@ -1,0 +1,58 @@
+# Builds the API image and publishes it on GitHub Container Registry. Owner: B.
+# main  -> ghcr.io/<owner in lower case>/football-scout-api:latest (+ sha-<short commit>)
+# tag v* -> the same image tagged with the git tag (e.g. v1.0)
+name: publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR refuses upper-case image names, and an owner login may contain some.
+      - name: Nom de l'image en minuscules
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/football-scout-api" >> "$GITHUB_ENV"
+
+      - name: Étiquettes et labels OCI
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=tag
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Connexion à GHCR avec le jeton du workflow
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construction et publication
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # Includes org.opencontainers.image.source: GHCR links the package to this repository.
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

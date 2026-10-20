@@ -1,0 +1,85 @@
+<mxfile host="app.diagrams.net" agent="football-scout-agent" version="24.7.0">
+  <diagram id="architecture" name="Architecture">
+    <mxGraphModel dx="1300" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="zone_compose" value="docker compose : réseau interne" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#6c8ebf;verticalAlign=top;align=left;spacingLeft=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="250" y="170" width="760" height="360" as="geometry" />
+        </mxCell>
+        <mxCell id="zone_github" value="GitHub" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;strokeColor=#666666;verticalAlign=top;align=left;spacingLeft=8;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="580" width="520" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="client" value="Client&lt;br&gt;navigateur, curl, Swagger" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="270" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="proxy" value="&lt;b&gt;proxy&lt;/b&gt; · nginx 1.27&lt;br&gt;seul port publié : 80&lt;br&gt;limites de débit, en-têtes" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="280" y="260" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="&lt;b&gt;api&lt;/b&gt; · FastAPI + uvicorn&lt;br&gt;:8000 interne&lt;br&gt;routeurs → services → Neo4jClient&lt;br&gt;agent LangGraph" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="510" y="250" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="neo4j" value="&lt;b&gt;neo4j 5 + GDS&lt;/b&gt;&lt;br&gt;Bolt 7687 · HTTP 7474&lt;br&gt;(127.0.0.1 seulement)&lt;br&gt;volume neo4j_data" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="800" y="240" width="180" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="ingest" value="&lt;b&gt;ingest&lt;/b&gt; · scripts.seed_data&lt;br&gt;exécution unique" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="800" y="430" width="180" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="duckdb" value="data/transfermarkt-&lt;br&gt;datasets.duckdb" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="420" width="170" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="dev" value="Développeur&lt;br&gt;Neo4j Browser, cypher-shell" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="270" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="jobs" value="Jobs hors ligne&lt;br&gt;scripts.confirm_rumours&lt;br&gt;ml.train_link_prediction" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="120" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" value="Fournisseur LLM&lt;br&gt;Anthropic ou compatible OpenAI&lt;br&gt;(fake en test et en CI)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="400" y="40" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="rss" value="Flux RSS de presse" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="650" y="50" width="160" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="actions" value="&lt;b&gt;GitHub Actions&lt;/b&gt;&lt;br&gt;lint · tests (Neo4j :7688)&lt;br&gt;publish" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="615" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ghcr" value="&lt;b&gt;GHCR&lt;/b&gt;&lt;br&gt;football-scout-api:latest" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="310" y="605" width="190" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="HTTP :80" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="client" target="proxy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="HTTP :8000" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="proxy" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="Bolt : Cypher paramétré&lt;br&gt;read / write" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="api" target="neo4j">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="HTTPS : agent, extraction" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="api" target="llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="HTTPS : import d'articles" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="api" target="rss">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="lecture seule" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="ingest" target="duckdb">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="Bolt : MERGE par lots" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="ingest" target="neo4j">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="Bolt" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="jobs" target="neo4j">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="127.0.0.1:7474 / 7687" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="dev" target="neo4j">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="docker push" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;" edge="1" parent="1" source="actions" target="ghcr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" value="docker pull (API_IMAGE)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;fontSize=11;dashed=1;" edge="1" parent="1" source="ghcr" target="api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

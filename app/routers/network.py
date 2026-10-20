@@ -1,13 +1,15 @@
 """GDS and ML endpoints. Owner: C."""
 
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.database.neo4j import Neo4jClient, get_db
+from app.config import get_settings
+from app.database.neo4j import Neo4jClient, get_client, get_db
 from app.models.network import ClubScore, Community, GdsRefreshReport, PredictedMove, SimilarPlayer
 from app.security import require_api_key
-from app.services.gds import GdsService
+from app.services.gds import GDS_TIMEOUT_S, GdsService
 
 router = APIRouter(prefix="/api", tags=["network"])
 
@@ -15,6 +17,20 @@ router = APIRouter(prefix="/api", tags=["network"])
 def get_gds_service(db: Neo4jClient = Depends(get_db)) -> GdsService:
     """Build the service for one request."""
     return GdsService(db)
+
+
+@lru_cache
+def get_gds_admin_client() -> Neo4jClient:
+    """Process-wide client with the long GDS limit, used by `refresh` only (cached)."""
+    settings = get_settings()
+    return Neo4jClient(
+        settings.neo4j_uri, (settings.neo4j_user, settings.neo4j_password), settings.neo4j_database, GDS_TIMEOUT_S
+    )
+
+
+def get_admin_gds_service(db: Neo4jClient = Depends(get_db)) -> GdsService:
+    """Service for `refresh`: the shared client is swapped for the long-timeout one; a test override is kept."""
+    return GdsService(get_gds_admin_client() if db is get_client() else db)
 
 
 @router.get("/clubs/hubs", response_model=list[ClubScore])
@@ -56,6 +72,6 @@ def predicted_moves(
 
 
 @router.post("/admin/gds/refresh", response_model=GdsRefreshReport, dependencies=[Depends(require_api_key)])
-def refresh_gds(service: GdsService = Depends(get_gds_service)) -> GdsRefreshReport:
+def refresh_gds(service: GdsService = Depends(get_admin_gds_service)) -> GdsRefreshReport:
     """Recompute projections and algorithms (protected by X-API-Key)."""
     return service.refresh()

@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel
 
 from app.config import get_settings
-from app.llm.client import FakeChatModel, get_chat_model, tool_call
+from app.llm.client import FakeChatModel, get_chat_model, json_output, structured, tool_call
 
 
 class Extraction(BaseModel):
@@ -111,3 +111,31 @@ def test_fake_structured_output_rejects_invalid_items():
     model = FakeChatModel()
     with pytest.raises(ValueError):
         model.with_structured_output(Extraction).invoke("no default for a required field")
+
+
+def test_structured_uses_native_output_for_fake_models():
+    model = FakeChatModel(script=[{"player": "Diogo Santos"}])
+    assert structured(model, Extraction).invoke("x").player == "Diogo Santos"
+
+
+def test_json_output_parses_fenced_json_and_retries_once():
+    model = FakeChatModel(
+        script=[
+            "<think>let me think</think>Sure:\n```json\n{\"player\": \"Joao Ferreira\", \"confidence\": 0.7}\n```",
+            "not json at all",
+            '{"confidence": 0.1}',
+            '{"player": "Gabriel Rocha"}',
+        ]
+    )
+    first = json_output(model, Extraction, [("human", "extract")])
+    assert (first.player, first.confidence) == ("Joao Ferreira", 0.7)
+    with pytest.raises(ValueError):
+        json_output(model, Extraction, [("human", "extract")])  # two invalid replies in a row
+    assert json_output(model, Extraction, [("human", "extract")], retries=0).player == "Gabriel Rocha"
+    assert "JSON schema" in model.calls[0][-1].content
+
+
+def test_structured_falls_back_to_json_prompting_for_other_models(monkeypatch):
+    use_provider(monkeypatch, "openai_compatible", OPENAI_API_KEY="sk-test", LLM_BASE_URL="https://x.example/v1")
+    runnable = structured(get_chat_model("small"), Extraction)
+    assert type(runnable).__name__ == "RunnableLambda"

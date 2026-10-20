@@ -22,6 +22,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.database.neo4j import Neo4jClient
+from app.llm.client import get_chat_model, structured
 from app.models.rumours import ImportReport, ImportRequest, RumourOut
 
 DEFAULT_FEEDS = [
@@ -315,11 +316,9 @@ class RumourService:
     def _extract(self, article: RawArticle) -> ArticleExtraction:
         """Ask the small model for the rumours of one article."""
         if self.model is None:
-            from app.llm.client import get_chat_model  # pylint: disable=import-outside-toplevel
-
             self.model = get_chat_model("small")
         text = f"Title: {article.title}\n\n{article.text}"[:MAX_TEXT_CHARS]
-        return self.model.with_structured_output(ArticleExtraction).invoke(
+        return structured(self.model, ArticleExtraction).invoke(
             [("system", EXTRACTION_PROMPT), ("human", text)]
         )
 

@@ -65,3 +65,13 @@ One line per choice not settled by `CLAUDE.md`, in the order it was made.
 - **C3 · versions** `lp-<model>-<yyyymmdd>`; a run deletes older `lp-` predictions (by batches of 10,000), never
   other versions such as the `fixture` ones of the test graph.
 - **C3 · `predicted_moves`**: reads the stored relations, `ORDER BY probability DESC, club_id LIMIT $limit`.
+- **C1 fix · drops** (review of B on #10): each projection drop has its own `try/except (Neo4jError, DriverError)`
+  and logs a warning, so both drops are attempted and the caller sees the algorithm's error. `ServiceUnavailable`
+  is a `DriverError`, not a `Neo4jError`: catching only the latter would miss a lost connection.
+- **C1 fix · refresh timeout**: `POST /api/admin/gds/refresh` uses its own cached client with `GDS_TIMEOUT_S = 600`
+  (same as nginx on `/api/admin/`), a constant like `INGEST_TIMEOUT_S` of A because `app/config.py` belongs to B.
+  The shared client is swapped only when it is the app's `get_client()`, so a test override of `get_db` still wins.
+- **C1 · timings on the full graph** (2,232 clubs, 68,139 projected `SENDS_TO`, 17,856 players, 719,414 projected
+  `PLAYED_WITH` relationships, local Docker): project clubs 5.2 s, PageRank 0.9 s, Louvain 2.5 s (85 communities,
+  modularity 0.48), project teammates 1.1 s, FastRP 2.6 s, drops 0.3 s: 12.6 s in total, every step under 10 s but
+  with little margin. `similar_players` p50 307 ms, p95 1.1 s (20 players, k = 10).

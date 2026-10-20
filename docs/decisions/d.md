@@ -24,3 +24,6 @@ One line per choice that the shared rules did not settle.
 - D4: `RumourService.fetcher` and `.model` are attributes set in `__init__` (the constructor signature is frozen), replaced by fakes in tests.
 - D5: displayed confidence = extraction confidence × source reliability, with reliability = (confirmed + 5 × prior) / (decided + 5), decided = confirmed + contradicted + expired; the prior is the global confirmation rate (0.5 while nothing is decided). Raw values stay visible as `extraction_confidence` and `source_reliability`.
 - D5: reliability is computed at read time (two small aggregate queries per `for_player` call) rather than stored, so it follows A's confirmation job without any write-back.
+- D6: structured output goes through `structured()`: native for Claude and the fake model, JSON schema in the prompt + Pydantic validation + one retry for OpenAI-compatible models (NanoGPT refuses both `json_schema` response formats and forced `tool_choice`).
+- D6: the evaluation scores answers automatically (expected names, numbers in any format, forbidden names, claim nature for rumours and predictions); it reloads the test database with the mini graph before the run.
+- D6: the cost is estimated from LangChain usage metadata and the NanoGPT public prices passed on the command line (`--price-small`, `--price-large`).

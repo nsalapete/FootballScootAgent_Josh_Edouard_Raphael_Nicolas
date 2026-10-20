@@ -4,15 +4,22 @@ Contract: keep these method names, parameters and return types. Agent tools (D) 
 Algorithms write their scores on the nodes (`pagerank`, `community_id`, `embedding`) so that reads stay cheap.
 
 `refresh` builds two in-memory projections, runs the algorithms in `write` mode and always drops the projections,
-even when an algorithm fails. Each step is its own transaction, so each one stays under the client timeout.
+even when an algorithm fails. Each step is its own transaction; the API runs `refresh` on a client with the longer
+`GDS_TIMEOUT_S` limit (see `app/routers/network.py`), since a step on the full graph can exceed the 10 s of reads.
 """
 
+import logging
 import time
 from uuid import uuid4
+
+from neo4j.exceptions import DriverError, Neo4jError
 
 from app.database.neo4j import Neo4jClient
 from app.models.network import ClubScore, Community, GdsRefreshReport, PredictedMove, SimilarPlayer
 
+logger = logging.getLogger(__name__)
+
+GDS_TIMEOUT_S = 600.0  # same limit as nginx on /api/admin/
 EMBEDDING_DIMENSION = 64
 RANDOM_SEED = 42
 MAX_COMMUNITIES = 100
@@ -128,12 +135,20 @@ class GdsService:
             self.client.write(FASTRP, {"graph": teammates, "dimension": EMBEDDING_DIMENSION, "seed": RANDOM_SEED})
         finally:
             for name in (clubs, teammates):
-                self.client.write(DROP, {"graph": name})
+                self._drop(name)
         return GdsRefreshReport(
             projections=["clubs", "teammates"],
             algorithms=["pageRank", "louvain", "fastRP"],
             duration_s=round(time.perf_counter() - start, 3),
         )
+
+    def _drop(self, name: str) -> None:
+        """Drop one projection; a failure is logged, never raised, so that the other drop still runs and the
+        caller sees the original error of the algorithm."""
+        try:
+            self.client.write(DROP, {"graph": name})
+        except (Neo4jError, DriverError) as error:  # server error or connection lost
+            logger.warning(f"Could not drop GDS projection {name}: {error}")
 
     def hubs(self, limit: int = 20) -> list[ClubScore]:
         """Clubs sorted by weighted PageRank on `SENDS_TO`."""

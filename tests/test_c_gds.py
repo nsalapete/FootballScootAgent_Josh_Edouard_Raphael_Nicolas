@@ -1,9 +1,10 @@
 """GdsService: unit tests with a fake client, then GDS runs on the mini graph. Owner: C."""
 
 import pytest
-from neo4j.exceptions import Neo4jError
+from neo4j.exceptions import Neo4jError, ServiceUnavailable
 
-from app.services.gds import DROP, FASTRP, PAGERANK, GdsService
+from app.routers.network import get_admin_gds_service
+from app.services.gds import DROP, FASTRP, GDS_TIMEOUT_S, PAGERANK, GdsService
 
 CLEANUP = (
     "MATCH (c:Club) REMOVE c.pagerank, c.community_id",
@@ -142,3 +143,29 @@ def test_predicted_moves_on_the_mini_graph(neo4j_db):
     assert moves[0].nature == "predicted" and moves[0].model_version == "fixture"
     assert not GdsService(neo4j_db).predicted_moves(1)
     assert not GdsService(neo4j_db).predicted_moves(9, limit=1)[1:]
+
+
+def test_a_failing_drop_does_not_hide_the_error_nor_skip_the_other_drop():
+    class FailingDrops(RecordingClient):
+        """Every drop fails like a lost connection; FastRP fails too."""
+
+        def write(self, query, params=None):
+            if query == DROP:
+                self.calls.append((query, params))
+                raise ServiceUnavailable("connection lost")
+            return super().write(query, params)
+
+    client = FailingDrops(fail_on=FASTRP)
+    with pytest.raises(RuntimeError, match="algorithm failed"):  # the original error, not the drop error
+        GdsService(client).refresh()
+    assert sum(1 for query, _ in client.calls if query == DROP) == 2
+
+
+def test_refresh_endpoint_uses_the_long_timeout_client(monkeypatch):
+    shared = object()
+    monkeypatch.setattr("app.routers.network.get_client", lambda: shared)
+    monkeypatch.setattr("app.routers.network.get_gds_admin_client", lambda: "admin client")
+    assert get_admin_gds_service(shared).client == "admin client"
+    override = RecordingClient()
+    assert get_admin_gds_service(override).client is override  # a test override is kept
+    assert GDS_TIMEOUT_S > 10

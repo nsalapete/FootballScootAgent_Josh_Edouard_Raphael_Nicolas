@@ -31,3 +31,4 @@ One line per choice that the shared rules did not settle.
 - After D6: `player_profile` uses only B's `PlayerService.get` (position, age, value, current club); nationality and transfer details would need a new service method owned by B, so they stay with the fallback.
 - After D6: `club_pipeline` returns the club totals (transfers and fees) computed by the tool, so the agent never has to add numbers itself (the verifier removes computed figures).
 - After D6: the router falls back to the large model when the small one fails (the small NanoGPT model hung on q27 every time); small-model calls give up after 30 s and 1 retry.
+- Verifier: numbers of temporal values returned by the driver (`neo4j.time.Date`) are read from their text form, as the LLM sees them (found while preparing the D7 demo: a correct date had been removed).

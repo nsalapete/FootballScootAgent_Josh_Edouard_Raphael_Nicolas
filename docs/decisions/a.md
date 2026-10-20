@@ -70,3 +70,32 @@ Findings that shape the ingestion:
   Restricted to the source clubs passed as parameter (500 per transaction): a test only rebuilds its own clubs.
 - **`SENDS_TO` content**: every transfer counts in `count` (loans included, as in the mini graph); `total_fee_eur` =
   `sum(t.fee_eur)`, which skips unknown fees and gives 0 when no fee of the pair is known.
+
+## A3 · data quality (`scripts/data_quality.py`)
+
+- **Loan rule** (no loan column): X -> Y then, for the same player, Y -> X within 760 days with no fee (0 or unknown)
+  = a loan; both legs get `is_loan = true` (the loan and its end, so `SENDS_TO` counts both directions as before).
+  760 days because returns peak at 5-6, 10-12, 17-18 and 22-24 months. Pairs are matched from the latest move
+  backwards and a move is in one pair at most: a first version (13 months, pairs read forwards) flagged Lukaku's
+  113 M purchase by Chelsea as a loan and missed Morata's 18-month and 2-year loans. Checked by hand on Mbappé,
+  Mount, Lukaku, Morata. Known limits: an ongoing loan (no return yet) and a loan ended by a purchase
+  (Mbappé 2017-2018 is caught because Transfermarkt records the end of loan before the purchase) are not detected.
+- **Detection before filtering**: the loan rule sees every transfer of the player, even those dropped next, so a
+  loan whose return is planned after the ingestion day is still a loan.
+- **Future transfers**: dated after the ingestion day = not a fact yet, dropped (`today` is a parameter for tests).
+- **Placeholders**: Transfermarkt ids 515 Without Club, 75 Unknown, 123 Retired, 2113 Career break are not clubs.
+  A transfer to or from one is dropped (it would make "Without Club" a hub of the transfer network for PageRank),
+  no `Club` node is created for them, and a player whose current club is one has no `PLAYS_FOR` (6 players).
+- **Same club on both sides**: dropped (0 left in the scope after the season filter; 8 in the whole file).
+- **Duplicates**: no exact duplicate exists, but the same route of the same player is sometimes recorded twice within
+  a few days (end of loan then purchase, or a corrected date). Moves on one route within 30 days are one move; the
+  record with a known fee is kept, then the highest fee, then the latest date.
+- **Missing fees**: kept as `null` (unknown), never replaced by 0 or by the market value; reported with zero fees.
+- **Reserve and youth teams** (Chelsea U23, RM Castilla) are separate Transfermarkt clubs: kept as light clubs, the
+  move to the first team stays a transfer. Not filtered: no reliable id link between a club and its reserve team.
+- **Pruning**: the ingestion deletes the `Transfer` nodes whose id a rule now drops and the placeholder clubs, so a
+  graph loaded before these rules is cleaned by a re-run. Nodes that fall out of the scope only because of a new
+  rule (5 players on the real file) stay until a clean reload: the ingestion never deletes a node it cannot prove it
+  created (the test database shares the mini graph).
+- **Report** printed at the end of every ingestion (`Data quality` block): raw, dropped per reason, kept, loans,
+  unknown and zero fees, players without club.

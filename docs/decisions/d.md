@@ -16,3 +16,9 @@ One line per choice that the shared rules did not settle.
 - D3: numbers of the question are allowed in claims (e.g. "under 23"); ages are computed by `search_players` so they appear in tool results.
 - D3: when the verifier removes a claim, the answer is rebuilt from kept claims only, with `[prediction]` / `[rumour]` tags, so the invented figure never reaches the user.
 - D3: optional fields added to my own models: `Claim.removal_reason`, `AgentAnswer.needs_clarification`.
+- D4: default feeds are two RSS transfer feeds (Guardian, BBC) and one GDELT DOC query; the source of an article is its domain, so the reliability of D5 is computed per domain.
+- D4: a name resolves only if exactly one of the top 5 full-text hits contains every word of the extracted name; otherwise it is counted in `unresolved_names` and the rumour is dropped.
+- D4: the extracted quote must appear in the article (case, accents and punctuation ignored), otherwise the rumour is dropped (`rejected_quotes`): the LLM cannot invent a source sentence.
+- D4: a new article about a player/club pair that already has a `pending` rumour is attached to it (`REPORTS`) instead of creating a duplicate; A's confirmation job then dates the rumour from its earliest article.
+- D4: an article whose extraction fails is not stored, so the next import retries it; articles without rumours are stored, so they are never paid for twice.
+- D4: `RumourService.fetcher` and `.model` are attributes set in `__init__` (the constructor signature is frozen), replaced by fakes in tests.

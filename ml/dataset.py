@@ -1,20 +1,27 @@
 """Temporal link-prediction dataset on the club transfer network, read straight from DuckDB. Owner: C.
 
-A sample is a directed pair of clubs (seller, buyer). The question is: will a pair that never traded before
+A sample is a directed pair of scope clubs (seller, buyer). The question is: will a pair that never traded before
 the cut-off season trade during the target seasons?
 
-- Edges: one row per (seller, buyer, season) with the number of transfers, both clubs in the scope competitions.
+The universe is the one of the Neo4j graph, built with the ingestion code of A (`scripts/seed_data.py`):
+- scope clubs: clubs that played a league game of `SCOPE_COMPETITIONS` from `SCOPE_FROM_SEASON` on;
+- transfers: those with a scope club on at least one side, cleaned by `scripts/data_quality.py` (loans, duplicates,
+  placeholders, future dates, seasons before the scope), exactly the transfers behind `SENDS_TO`.
+
+- Edges: one row per (seller, buyer, season) with the number of transfers (light clubs included, like `SENDS_TO`).
 - Graph: every edge up to `train_until` (included). Features are computed on this graph only.
-- Positives: pairs that trade during `target_seasons` and never traded up to `train_until`, both clubs
-  present in the graph (a club unseen before has no neighbourhood to learn from).
-- Negatives: random pairs of graph clubs that did not trade up to `target_seasons`, `negatives_per_positive`
-  per positive, fixed seed.
+- Positives: pairs of scope clubs that trade during `target_seasons` and never traded up to `train_until`, both
+  clubs present in the graph (a club unseen before has no neighbourhood to learn from).
+- Negatives: random pairs of scope clubs of the graph that did not trade up to `target_seasons`,
+  `negatives_per_positive` per positive, fixed seed.
 
 No leakage: nothing after `train_until` is used to compute a feature; later seasons only provide labels.
 """
 
 import math
 import random
+from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -22,55 +29,70 @@ import networkx as nx
 import pandas as pd
 
 from app.config import get_settings
+from scripts.data_quality import clean_transfers
+from scripts.seed_data import (
+    SCOPE_CLUBS_SQL,
+    SCOPE_GAMES_SQL,
+    SCOPE_PLAYS_IN_SQL,
+    TRANSFERS_SQL,
+    fetch,
+    shape_transfer,
+)
 
 FEATURES = ["common_neighbours", "adamic_adar", "preferential_attachment", "same_country", "pagerank_gap"]
 SEED = 42
 NEGATIVES_PER_POSITIVE = 5
 TEST_SPLIT = (2022, (2023, 2024))  # graph up to 2022, new pairs of 2023 and 2024
 TRAIN_SPLIT = (2020, (2021, 2022))  # same protocol two seasons earlier, to fit the model
+EDGE_COLUMNS = ["src", "dst", "season", "count"]
 
-EDGES_SQL = """
-SELECT t.from_club_id AS src, t.to_club_id AS dst, t.transfer_season AS season_label, count(*) AS count
-FROM transfers t
-JOIN clubs a ON a.club_id = CAST(t.from_club_id AS VARCHAR)
-JOIN clubs b ON b.club_id = CAST(t.to_club_id AS VARCHAR)
-WHERE a.domestic_competition_id IN (SELECT unnest($competitions))
-  AND b.domestic_competition_id IN (SELECT unnest($competitions))
-  AND t.from_club_id <> t.to_club_id
-  AND t.transfer_season IS NOT NULL
-GROUP BY ALL
-"""
-
+# Country of a scope club: the one of the competition it played in during its latest scope season.
 COUNTRIES_SQL = """
-SELECT CAST(c.club_id AS INTEGER) AS club_id, k.country_name AS country
-FROM clubs c
-JOIN competitions k ON k.competition_id = c.domestic_competition_id
-WHERE c.domestic_competition_id IN (SELECT unnest($competitions))
+SELECT p.club_id, k.country_name AS country
+FROM (SELECT club_id, arg_max(competition_id, season) AS competition_id FROM scope_plays_in GROUP BY club_id) p
+JOIN competitions k ON k.competition_id = p.competition_id
 """
 
 
-def parse_season(label: str) -> int:
-    """Transfermarkt season label to its start year: '22/23' -> 2022, '99/00' -> 1999."""
-    start = int(label.split("/")[0])
-    return start + (1900 if start >= 50 else 2000)
+@dataclass
+class Universe:
+    """Transfer edges per season, scope clubs and their country: the inputs of every split."""
+
+    edges: pd.DataFrame
+    clubs: frozenset[int] = field(default_factory=frozenset)
+    countries: dict[int, str] = field(default_factory=dict)
 
 
-def load_edges(duckdb_path: str | Path | None = None, competitions: list[str] | None = None) -> pd.DataFrame:
-    """Club-to-club transfer counts per season (columns src, dst, season, count)."""
+def edges_from_transfers(rows: list[dict]) -> pd.DataFrame:
+    """Cleaned transfer rows to transfer counts per (src, dst, season)."""
+    frame = pd.DataFrame(
+        [(row["from_club_id"], row["to_club_id"], row["season"]) for row in rows], columns=EDGE_COLUMNS[:3]
+    )
+    frame = frame.groupby(EDGE_COLUMNS[:3], as_index=False).size().rename(columns={"size": "count"})
+    return frame.astype({column: int for column in EDGE_COLUMNS})[EDGE_COLUMNS]
+
+
+def load_universe(
+    duckdb_path: str | Path | None = None,
+    competitions: list[str] | None = None,
+    from_season: int | None = None,
+    today: date | None = None,
+) -> Universe:
+    """Scope clubs, their country and the cleaned transfers, with the same rules as the ingestion."""
     settings = get_settings()
+    scope = {
+        "competitions": competitions or settings.competitions,
+        "from_season": settings.scope_from_season if from_season is None else from_season,
+    }
     with duckdb.connect(str(duckdb_path or settings.duckdb_path), read_only=True) as con:
-        frame = con.execute(EDGES_SQL, {"competitions": competitions or settings.competitions}).df()
-    frame["season"] = frame.pop("season_label").map(parse_season)
-    frame = frame.groupby(["src", "dst", "season"], as_index=False)["count"].sum()
-    return frame.astype({"src": int, "dst": int, "season": int, "count": int})
-
-
-def load_countries(duckdb_path: str | Path | None = None, competitions: list[str] | None = None) -> dict[int, str]:
-    """Country of each club in scope, from its domestic competition."""
-    settings = get_settings()
-    with duckdb.connect(str(duckdb_path or settings.duckdb_path), read_only=True) as con:
-        frame = con.execute(COUNTRIES_SQL, {"competitions": competitions or settings.competitions}).df()
-    return dict(zip(frame["club_id"].astype(int), frame["country"]))
+        con.execute(SCOPE_GAMES_SQL, scope)
+        con.execute(SCOPE_PLAYS_IN_SQL)
+        con.execute(SCOPE_CLUBS_SQL)
+        clubs = frozenset(int(row["club_id"]) for row in fetch(con, "SELECT club_id FROM scope_clubs"))
+        countries = {int(row["club_id"]): row["country"] for row in fetch(con, COUNTRIES_SQL)}
+        raw = fetch(con, TRANSFERS_SQL)
+    cleaned = clean_transfers([shape_transfer(item) for item in raw], scope["from_season"], today or date.today())
+    return Universe(edges=edges_from_transfers(cleaned.rows), clubs=clubs, countries=countries)
 
 
 def training_graph(edges: pd.DataFrame, until: int) -> nx.DiGraph:
@@ -81,17 +103,34 @@ def training_graph(edges: pd.DataFrame, until: int) -> nx.DiGraph:
     return graph
 
 
-def new_pairs(edges: pd.DataFrame, graph: nx.DiGraph, seasons: tuple[int, ...]) -> set[tuple[int, int]]:
-    """Pairs trading during `seasons`, absent from `graph`, with both clubs in `graph`."""
+def candidate_clubs(graph: nx.DiGraph, clubs: frozenset[int]) -> set[int]:
+    """Clubs a pair may involve: scope clubs present in `graph` (every graph club when `clubs` is empty)."""
+    return set(graph.nodes) & clubs if clubs else set(graph.nodes)
+
+
+def new_pairs(
+    edges: pd.DataFrame, graph: nx.DiGraph, seasons: tuple[int, ...], clubs: frozenset[int] = frozenset()
+) -> set[tuple[int, int]]:
+    """Pairs of candidate clubs trading during `seasons` and absent from `graph`."""
     target = edges[edges["season"].isin(seasons)]
+    candidates = candidate_clubs(graph, clubs)
     pairs = set(zip(target["src"], target["dst"]))
-    return {(src, dst) for src, dst in pairs if src in graph and dst in graph and not graph.has_edge(src, dst)}
+    return {
+        (src, dst) for src, dst in pairs if src in candidates and dst in candidates and not graph.has_edge(src, dst)
+    }
 
 
-def sample_negatives(graph: nx.DiGraph, excluded: set[tuple[int, int]], count: int, seed: int = SEED) -> list:
-    """`count` distinct directed pairs of graph clubs, not edges of `graph` and not in `excluded`."""
-    nodes = sorted(graph.nodes)
-    blocked = set(graph.edges) | {(src, dst) for src, dst in excluded if src != dst and src in graph and dst in graph}
+def sample_negatives(
+    graph: nx.DiGraph, excluded: set[tuple[int, int]], count: int, seed: int = SEED, clubs: frozenset[int] = frozenset()
+) -> list:
+    """`count` distinct directed pairs of candidate clubs, not edges of `graph` and not in `excluded`."""
+    candidates = candidate_clubs(graph, clubs)
+    nodes = sorted(candidates)
+    blocked = {
+        (src, dst)
+        for src, dst in set(graph.edges) | set(excluded)
+        if src != dst and src in candidates and dst in candidates
+    }
     count = min(count, len(nodes) * (len(nodes) - 1) - len(blocked))
     rng = random.Random(seed)
     chosen: set[tuple[int, int]] = set()
@@ -127,8 +166,7 @@ def pair_features(graph: nx.DiGraph, pairs: list[tuple[int, int]], countries: di
 
 
 def build_split(
-    edges: pd.DataFrame,
-    countries: dict[int, str],
+    universe: Universe,
     split: tuple[int, tuple[int, ...]],
     *,
     negatives_per_positive: int = NEGATIVES_PER_POSITIVE,
@@ -136,22 +174,20 @@ def build_split(
 ) -> pd.DataFrame:
     """Labelled pairs for `split = (train_until, target_seasons)`: 1 = new link during the target seasons."""
     train_until, target_seasons = split
+    edges = universe.edges
     graph = training_graph(edges, train_until)
-    positives = new_pairs(edges, graph, target_seasons)
+    positives = new_pairs(edges, graph, target_seasons, universe.clubs)
     # A negative must not trade at any point up to the end of the target window either.
     window = edges[edges["season"] <= max(target_seasons)]
     excluded = set(zip(window["src"], window["dst"]))
-    negatives = sample_negatives(graph, excluded, negatives_per_positive * len(positives), seed)
+    negatives = sample_negatives(graph, excluded, negatives_per_positive * len(positives), seed, universe.clubs)
     pairs = sorted(positives) + negatives
-    frame = pair_features(graph, pairs, countries)
+    frame = pair_features(graph, pairs, universe.countries)
     frame["label"] = [1] * len(positives) + [0] * len(negatives)
     return frame
 
 
-def load_splits(duckdb_path: str | Path | None = None, competitions: list[str] | None = None):
+def load_splits(universe: Universe | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(train, test) frames: train = graph up to 2020 and new pairs of 2021-2022, test = the official split."""
-    edges = load_edges(duckdb_path, competitions)
-    countries = load_countries(duckdb_path, competitions)
-    train = build_split(edges, countries, TRAIN_SPLIT)
-    test = build_split(edges, countries, TEST_SPLIT)
-    return train, test
+    universe = universe or load_universe()
+    return build_split(universe, TRAIN_SPLIT), build_split(universe, TEST_SPLIT)

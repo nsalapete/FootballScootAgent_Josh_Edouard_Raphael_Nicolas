@@ -34,6 +34,8 @@ _PIPELINE_QUERIES = {
     True: _PIPELINE.replace("__SINCE__", "t.date >= $since"),
 }
 
+_CLUB_EXISTS = "MATCH (c:Club {club_id: $club_id}) RETURN count(c) > 0 AS found"
+
 _RESOLVE_CLUB = """
 CALL db.index.fulltext.queryNodes('club_name_ft', $query) YIELD node, score
 RETURN node.club_id AS id, node.name AS name, score
@@ -61,3 +63,7 @@ class ClubService:
             return []
         rows = self.client.read(_RESOLVE_CLUB, {"query": query, "limit": limit})
         return [EntityMatch(kind="club", **row) for row in rows]
+
+    def exists(self, club_id: int) -> bool:
+        """True when a club has this id (lets the API tell an unknown club from a club with no sale)."""
+        return self.client.read(_CLUB_EXISTS, {"club_id": club_id})[0]["found"]

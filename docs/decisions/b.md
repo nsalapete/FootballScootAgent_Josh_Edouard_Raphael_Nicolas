@@ -33,6 +33,21 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
   au lieu de `$since IS NULL OR ...`, qui cacherait l'index `Transfer(date)` au planificateur.
 - **B2 · `ClubService.resolve`** : même construction de requête Lucene que pour les joueurs (`fulltext_query`,
   importée depuis `app/services/players.py`).
+- **B3 · 422 propres** : un gestionnaire global de `RequestValidationError` (dans `app/main.py`) renvoie un
+  `ErrorResponse` comme toutes les autres erreurs : `detail` lisible (une phrase) et `errors` (champ optionnel ajouté :
+  `location`, `field`, `message` par entrée invalide). Swagger documente ce corps pour le 422 de chaque routeur à
+  paramètres (`include_router(..., responses=...)`), `HTTPValidationError` disparaît du schéma.
+- **B3 · curseur invalide** : `InvalidCursorError` → 422 avec `detail` « Curseur de pagination invalide » (sans `errors` :
+  ce n'est pas une erreur de type, le paramètre est une chaîne valide).
+- **B3 · 404** : joueur inconnu sur `/path` (chaque extrémité testée seulement si aucun chemin n'est trouvé), club
+  inconnu sur `/pipeline` (vérifié seulement si la filière est vide : un club connu qui n'a rien vendu donne `[]`).
+  Nouvelle méthode `ClubService.exists`.
+- **B3 · routes ajoutées dans mes routeurs** : `GET /api/players/{id}`, `/api/players/{id}/valuations`,
+  `/api/players/resolve`, `/api/clubs/resolve` : elles exposent `get`, `value_trend` et `resolve`, donnent de vrais cas
+  de 404 et permettent de trouver un id à partir d'un nom pour les exemples `curl`. Aucune route existante modifiée.
+- **B3 · code 422** : `HTTPStatus.UNPROCESSABLE_ENTITY` (bibliothèque standard) plutôt que la constante Starlette,
+  renommée dans Starlette 1.x et absente des versions plus anciennes.
+- **B3 · limites de taille** : `name` de 1 à 100 caractères, `limit` de résolution de 1 à 20.
 - **B4 · healthcheck Neo4j** : identifiants substitués par Compose (`${NEO4J_PASSWORD}`) et non par le shell du conteneur
   (`$${...}`), où la variable n'existe pas : avec un autre mot de passe que celui par défaut, Neo4j restait « unhealthy »
   et l'API ne démarrait jamais. Pas de `NEO4J_PASSWORD` dans l'environnement du conteneur Neo4j : l'image transforme

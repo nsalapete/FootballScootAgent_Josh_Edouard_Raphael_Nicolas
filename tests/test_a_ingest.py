@@ -321,7 +321,7 @@ def test_ingest_properties_follow_the_schema(neo4j_db, ingested):
 @pytest.mark.neo4j
 def test_ingest_is_idempotent(neo4j_db, ingested, tiny_duckdb):
     before = _counts(neo4j_db)
-    seed_data.ingest(neo4j_db, tiny_duckdb, [COMPETITION], FROM_SEASON, size=2)
+    seed_data.ingest(neo4j_db, tiny_duckdb, [COMPETITION], FROM_SEASON)
     assert _counts(neo4j_db) == before
     assert ingested["loaded"]["players"] == 3
 

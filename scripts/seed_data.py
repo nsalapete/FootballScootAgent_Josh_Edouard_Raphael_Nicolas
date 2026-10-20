@@ -8,7 +8,8 @@ Scope (`SCOPE_COMPETITIONS`, `SCOPE_FROM_SEASON`):
 - players: those who appeared for a scope club in those games, whose current club is a scope club, or who made
   a scope transfer;
 - transfers: from the first scope season on, with a scope club on at least one side. The other side becomes a
-  "light" club (id and name only);
+  "light" club (id and name only). Loans, placeholders, duplicates and future dates follow the rules of
+  `scripts/data_quality.py`, and a data-quality report is printed at the end;
 - valuations: of scope players, from January 1st of the first scope season on.
 
 Derived relationships are computed at the end:
@@ -36,6 +37,7 @@ from app.config import get_settings
 from app.database.neo4j import Neo4jClient
 from scripts.country_codes import canonical_name, country_code
 from scripts.cypher_files import run_file
+from scripts.data_quality import PSEUDO_CLUBS, CleanTransfers, clean_transfers, is_pseudo_club
 
 ROOT = Path(__file__).resolve().parents[1]
 CONSTRAINTS = ROOT / "scripts" / "constraints.cypher"
@@ -216,6 +218,7 @@ class Extract:
     transfers: list[Row] = field(default_factory=list)
     valuations: list[Row] = field(default_factory=list)
     played_with: list[Row] = field(default_factory=list)
+    cleaning: CleanTransfers = field(default_factory=CleanTransfers)
 
     def club_ids(self) -> list[int]:
         """Every club id of the extract, scope and light."""
@@ -234,29 +237,26 @@ def competition_name(slug: str | None) -> str | None:
     return slug.replace("-", " ").title() if slug else None
 
 
-def transfer_rows(raw: list[Row], from_season: int) -> list[Row]:
-    """Shape raw DuckDB transfers, dropping those before `from_season`; club names are kept for light clubs."""
-    rows = []
-    for item in raw:
-        season = parse_season(item["transfer_season"])
-        if season is None or season < from_season:
-            continue
-        day = to_date(item["transfer_date"])
-        rows.append(
-            {
-                "transfer_id": transfer_id(item["player_id"], day, item["from_club_id"], item["to_club_id"]),
-                "player_id": item["player_id"],
-                "from_club_id": item["from_club_id"],
-                "to_club_id": item["to_club_id"],
-                "date": day,
-                "season": season,
-                "fee_eur": to_fee(item["transfer_fee"]),
-                "is_loan": False,
-                "from_club_name": item["from_club_name"],
-                "to_club_name": item["to_club_name"],
-            }
-        )
-    return rows
+def shape_transfer(item: Row) -> Row:
+    """One raw DuckDB transfer as a `Transfer` row (season may be None); club names are kept for light clubs."""
+    day = to_date(item["transfer_date"])
+    return {
+        "transfer_id": transfer_id(item["player_id"], day, item["from_club_id"], item["to_club_id"]),
+        "player_id": item["player_id"],
+        "from_club_id": item["from_club_id"],
+        "to_club_id": item["to_club_id"],
+        "date": day,
+        "season": parse_season(item["transfer_season"]),
+        "fee_eur": to_fee(item["transfer_fee"]),
+        "is_loan": False,
+        "from_club_name": item["from_club_name"],
+        "to_club_name": item["to_club_name"],
+    }
+
+
+def transfer_rows(raw: list[Row], from_season: int, today: date | None = None) -> list[Row]:
+    """Shaped and cleaned transfers of the scope (see `scripts/data_quality.py`)."""
+    return clean_transfers([shape_transfer(item) for item in raw], from_season, today or date.today()).rows
 
 
 def player_row(item: Row) -> Row:
@@ -270,7 +270,7 @@ def player_row(item: Row) -> Row:
         "market_value_eur": item["market_value_in_eur"],
         "foot": item["foot"],
         "height_cm": item["height_in_cm"],
-        "club_id": item["club_id"],
+        "club_id": None if is_pseudo_club(item["club_id"]) else item["club_id"],
         "country_code": country_code(item["country_of_citizenship"]),
     }
 
@@ -282,7 +282,7 @@ def light_club_rows(transfers: list[Row], raw_players: list[Row], scope_ids: set
         names.setdefault(item["from_club_id"], item["from_club_name"])
         names.setdefault(item["to_club_id"], item["to_club_name"])
     for item in raw_players:
-        if item["club_id"] is not None:
+        if item["club_id"] is not None and not is_pseudo_club(item["club_id"]):
             names.setdefault(item["club_id"], item["current_club_name"])
     return [{"club_id": club, "name": name} for club, name in sorted(names.items()) if club not in scope_ids]
 
@@ -297,8 +297,36 @@ def country_rows(names: list[str | None]) -> list[Row]:
     return [{"code": code, "name": name} for code, name in sorted(countries.items())]
 
 
-def extract(duckdb_path: str | Path, competitions: list[str], from_season: int) -> Extract:
-    """Read the scope of the graph from DuckDB (read-only) and shape it into rows for Neo4j."""
+def competition_rows(raw: list[Row]) -> list[Row]:
+    """Scope competitions with a display name and the code of their country."""
+    return [
+        {
+            "competition_id": item["competition_id"],
+            "name": competition_name(item["name"]),
+            "country_code": country_code(item["country_name"]),
+        }
+        for item in raw
+    ]
+
+
+def valuation_rows(raw: list[Row]) -> list[Row]:
+    """Market values as `Valuation` rows, id `<player_id>-<date>`."""
+    return [
+        {
+            "valuation_id": f"{item['player_id']}-{to_date(item['date']).isoformat()}",
+            "player_id": item["player_id"],
+            "date": to_date(item["date"]),
+            "value_eur": item["market_value_in_eur"],
+        }
+        for item in raw
+    ]
+
+
+def extract(duckdb_path: str | Path, competitions: list[str], from_season: int, today: date | None = None) -> Extract:
+    """Read the scope of the graph from DuckDB (read-only) and shape it into rows for Neo4j.
+
+    `today` is the ingestion day: transfers dated after it are not facts yet (defaults to the current date).
+    """
     scope = {"competitions": competitions, "from_season": from_season}
     with duckdb.connect(str(duckdb_path), read_only=True) as con:
         con.execute(SCOPE_GAMES_SQL, scope)
@@ -306,8 +334,10 @@ def extract(duckdb_path: str | Path, competitions: list[str], from_season: int) 
         con.execute(SCOPE_CLUBS_SQL)
         clubs = fetch(con, "SELECT club_id, name FROM scope_clubs ORDER BY club_id")
         plays_in = fetch(con, "SELECT club_id, competition_id, season FROM scope_plays_in ORDER BY ALL")
-        transfers = transfer_rows(fetch(con, TRANSFERS_SQL), from_season)
-        con.execute(TRANSFER_PLAYERS_SQL, {"ids": sorted({row["player_id"] for row in transfers}) or [0]})
+        cleaned = clean_transfers(
+            [shape_transfer(item) for item in fetch(con, TRANSFERS_SQL)], from_season, today or date.today()
+        )
+        con.execute(TRANSFER_PLAYERS_SQL, {"ids": sorted({row["player_id"] for row in cleaned.rows}) or [0]})
         con.execute(SCOPE_PLAYERS_SQL, {"from_season": from_season})
         con.execute(SCOPE_APPEARANCES_SQL)
         played_with = fetch(con, PLAYED_WITH_SQL)
@@ -315,35 +345,22 @@ def extract(duckdb_path: str | Path, competitions: list[str], from_season: int) 
         raw_valuations = fetch(con, VALUATIONS_SQL, {"from_season": from_season})
         raw_competitions = fetch(con, COMPETITIONS_SQL, {"competitions": competitions})
 
-    competitions_rows = [
-        {
-            "competition_id": item["competition_id"],
-            "name": competition_name(item["name"]),
-            "country_code": country_code(item["country_name"]),
-        }
-        for item in raw_competitions
-    ]
+    players = [player_row(item) for item in raw_players]
+    cleaned.counts["players_without_club"] = sum(row["club_id"] is None for row in players)
     names = [item["country_of_citizenship"] for item in raw_players] + [
         item["country_name"] for item in raw_competitions
     ]
     return Extract(
         countries=country_rows(names),
-        competitions=competitions_rows,
+        competitions=competition_rows(raw_competitions),
         clubs=clubs,
-        light_clubs=light_club_rows(transfers, raw_players, {row["club_id"] for row in clubs}),
+        light_clubs=light_club_rows(cleaned.rows, raw_players, {row["club_id"] for row in clubs}),
         plays_in=plays_in,
-        players=[player_row(item) for item in raw_players],
-        transfers=transfers,
-        valuations=[
-            {
-                "valuation_id": f"{item['player_id']}-{to_date(item['date']).isoformat()}",
-                "player_id": item["player_id"],
-                "date": to_date(item["date"]),
-                "value_eur": item["market_value_in_eur"],
-            }
-            for item in raw_valuations
-        ],
+        players=players,
+        transfers=cleaned.rows,
+        valuations=valuation_rows(raw_valuations),
         played_with=played_with,
+        cleaning=cleaned,
     )
 
 
@@ -427,6 +444,19 @@ MERGE (t)-[:FROM]->(src)
 MERGE (t)-[:TO]->(dst)
 """
 
+# Clean-up of what a previous run may have loaded before a quality rule excluded it.
+PRUNE_TRANSFERS_CYPHER = """
+UNWIND $rows AS transfer_id
+MATCH (t:Transfer {transfer_id: transfer_id})
+DETACH DELETE t
+"""
+
+PRUNE_PSEUDO_CLUBS_CYPHER = """
+MATCH (c:Club) WHERE c.club_id IN $club_ids
+OPTIONAL MATCH (c)<-[:FROM|TO]-(t:Transfer)
+DETACH DELETE t, c
+"""
+
 VALUATIONS_CYPHER = """
 UNWIND $rows AS row
 MATCH (p:Player {player_id: row.player_id})
@@ -480,9 +510,11 @@ def load_extract(db: Neo4jClient, data: Extract, size: int = BATCH_SIZE) -> dict
         ("players", PLAYERS_CYPHER, data.players),
         ("plays_for", PLAYS_FOR_CYPHER, data.players),
         ("citizen_of", CITIZEN_OF_CYPHER, data.players),
+        ("pruned_transfers", PRUNE_TRANSFERS_CYPHER, data.cleaning.dropped_ids),
         ("transfers", TRANSFERS_CYPHER, data.transfers),
         ("valuations", VALUATIONS_CYPHER, data.valuations),
     ]
+    db.write(PRUNE_PSEUDO_CLUBS_CYPHER, {"club_ids": sorted(PSEUDO_CLUBS)})
     return {name: load(db, cypher, rows, size) for name, cypher, rows in steps}
 
 
@@ -516,16 +548,16 @@ def ingest(
     duckdb_path: str | Path,
     competitions: list[str],
     from_season: int,
-    size: int = BATCH_SIZE,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """Constraints, extraction, facts, then derived relationships; return the row counts and durations."""
     started = time.perf_counter()
     run_file(db, CONSTRAINTS)
-    data = extract(duckdb_path, competitions, from_season)
+    data = extract(duckdb_path, competitions, from_season, today)
     extracted = time.perf_counter()
-    loaded = load_extract(db, data, size)
+    loaded = load_extract(db, data)
     facts_loaded = time.perf_counter()
-    loaded.update(load_derived(db, data, size))
+    loaded.update(load_derived(db, data))
     finished = time.perf_counter()
     return {
         "loaded": loaded,
@@ -533,6 +565,7 @@ def ingest(
         "load_s": round(facts_loaded - extracted, 1),
         "derived_s": round(finished - facts_loaded, 1),
         "club_ids": data.club_ids(),
+        "quality": data.cleaning.counts,
     }
 
 
@@ -542,6 +575,9 @@ def print_report(report: dict[str, Any], summary: dict[str, dict[str, int]]) -> 
     for name, count in report["loaded"].items():
         print(f"  {name:<14} {count:>9,}")
     print(f"Extraction {report['extract_s']} s, facts {report['load_s']} s, derived {report['derived_s']} s")
+    print("Data quality (transfers of the scope clubs):")
+    for name, count in report["quality"].items():
+        print(f"  {name:<20} {count:>9,}")
     print("Nodes per label:")
     for label, count in summary["nodes"].items():
         print(f"  {label:<14} {count:>9,}")

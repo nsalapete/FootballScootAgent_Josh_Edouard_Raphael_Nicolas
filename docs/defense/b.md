@@ -11,6 +11,8 @@ Objectif : pouvoir défendre chaque ligne du code de B sans l'avoir écrit. Les 
 | B2 | Plus court chemin de coéquipiers (≤ 6 sauts), filière de transferts par compétition, résolution de club | `app/services/{players,clubs}.py`, `tests/test_b_clubs.py` |
 | B3 | 404 joueur ou club inconnu, 422 uniformes, exemples Swagger, 4 routes de lecture en plus | `app/main.py`, `app/routers/`, `app/models/`, `tests/test_b_api.py` |
 | B4 | Stack Docker : proxy nginx seul exposé, API derrière, Neo4j sain ; Makefile compatible Windows | `docker-compose.yml`, `nginx/nginx.conf`, `Dockerfile`, `.dockerignore`, `Makefile`, `tests/test_b_containers.py` |
+| B5 | Image de l'API publiée sur GHCR à chaque push sur `main` (et à chaque tag `v*`) | `.github/workflows/publish.yml`, `docs/architecture.md` |
+| B6 | Architecture : services, ports, flux, diagramme draw.io et Mermaid, exemples `curl` de chaque endpoint | `docs/architecture.md`, `docs/architecture.drawio` |
 
 ## 2. Les requêtes et leur coût
 
@@ -102,6 +104,25 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
 - **Ce qu'ils ne protègent pas** (à dire avant qu'on le demande) : pas de TLS (en production : certificat sur le proxy),
   `/api/agent/ask` n'est protégé que par la limite de débit, pas par la clé (route de D, choix du squelette).
 
+## 7 bis. Image publiée et documentation (B5, B6)
+
+- **Ce que fait `publish.yml`** : à chaque push sur `main` (et à chaque tag `v*`), GitHub Actions construit l'image avec le
+  `Dockerfile` et la pousse sur GitHub Container Registry. Étiquettes : `latest` (dernier `main`), `sha-<commit>` (une
+  image par commit, pour revenir en arrière), `v1.0` (le rendu). `docker/metadata-action` calcule ces étiquettes et les
+  labels OCI ; le label `org.opencontainers.image.source` rattache le paquet au dépôt.
+- **Authentification** : le `GITHUB_TOKEN` éphémère du workflow, avec `permissions: packages: write` limité à ce
+  workflow (les autres gardent les droits par défaut). Aucun secret à créer ni à faire tourner.
+- **Nom en minuscules** : GHCR refuse les majuscules ; `${GITHUB_REPOSITORY_OWNER,,}` (bash) convertit le propriétaire.
+- **Paquet public** : étape manuelle unique dans les réglages du paquet (GitHub → Packages → football-scout-api →
+  Package settings → Change visibility → Public) ; sans elle, `docker pull` demande une connexion.
+- **Bug trouvé en route (B4)** : le healthcheck Neo4j lisait le mot de passe dans le shell du conteneur, où la variable
+  n'existe pas ; avec un mot de passe différent du défaut, Neo4j restait « unhealthy » et l'API ne démarrait jamais.
+  Corrigé en laissant Compose substituer la valeur de `.env`.
+- **Diagrammes** : draw.io pour l'édition (XML non compressé, donc lisible dans un diff), Mermaid pour l'affichage
+  direct dans GitHub ; les deux décrivent la même architecture.
+- **Exemples `curl`** : réponses réelles sur le mini-graphe (reproductibles par n'importe qui avec `make test-db`) ;
+  pour l'agent et le recalcul GDS, seulement la forme de la réponse, signalée comme telle.
+
 ## 8. Alternatives rejetées
 
 | Choix | Alternative rejetée | Raison |
@@ -113,6 +134,9 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
 | Six requêtes constantes pour la borne | f-string sur `max_hops` | même résultat mais aucune chaîne dynamique ; validation explicite |
 | 404 vérifié seulement si le résultat est vide | vérifier l'existence avant chaque requête | une requête de moins sur le cas normal |
 | Gestionnaire 422 global | 422 par défaut de FastAPI | corps d'erreur unique pour tous les clients |
+| `GITHUB_TOKEN` du workflow | jeton personnel (PAT) en secret | rien à créer ni à révoquer, droits limités au dépôt et au workflow |
+| Publication sur push vers `main` | attendre la fin du workflow `tests` (`workflow_run`) | consigne de la checklist ; `main` ne reçoit que des PR à CI verte |
+| Neo4j publié sur `127.0.0.1` | publié sur toutes les interfaces | la base n'a pas à être joignable depuis le réseau |
 
 ## 9. Questions probables
 
@@ -130,8 +154,29 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
   `player_position_dob`.
 - **« Pourquoi un proxy si l'API tourne déjà ? »** Un seul point d'entrée, l'API et Neo4j ne sont pas joignables
   directement, limites de débit et en-têtes sans toucher au code Python, et c'est là qu'on mettrait TLS.
+- **« À quoi sert l'image publiée ? »** Déployer sans reconstruire : `API_IMAGE=ghcr.io/nsalapete/football-scout-api:latest
+  docker compose up -d --no-build` ; l'étiquette `sha-<commit>` permet de revenir à une version précise.
+- **« Comment l'API trouve-t-elle Neo4j dans Docker ? »** Par le nom du service sur le réseau Compose
+  (`NEO4J_URI=bolt://neo4j:7687`, imposé dans `docker-compose.yml`) ; en local, `bolt://localhost:7687`.
+- **« Que se passe-t-il au démarrage si Neo4j est lent ? »** `depends_on: condition: service_healthy` : l'API attend que
+  `cypher-shell 'RETURN 1'` réussisse, le proxy attend que `/api/health` réponde.
+- **« Pourquoi `--proxy-headers` ? »** Pour qu'uvicorn lise la vraie IP du client dans `X-Forwarded-For` posé par nginx ;
+  on fait confiance à tous les émetteurs parce que le port 8000 n'est joignable que depuis le réseau Compose.
 
 ## 10. Chiffres de performance
 
 À compléter avec `docs/perf.md` (tâche B7, jeudi) : p50 / p95 par méthode, db hits avant et après index, curseur
 contre `SKIP`, chemin borné contre non borné.
+
+## 11. Relecture des PR de C (#10, #11, #12)
+
+Points remontés à C, utiles si le jury interroge sur la cohérence entre rôles :
+
+- Le recalcul GDS suppose que chaque étape tient sous le délai de 10 s du client : à mesurer sur le gros graphe,
+  sinon `TransactionTimedOut` donne un 500 ; un client dédié avec un délai plus long est proposé.
+- `similar_players` parcourt tous les joueurs à chaque appel ; un index vectoriel Neo4j (`CREATE VECTOR INDEX`) le
+  remplacerait par une recherche approchée.
+- Le jeu de données ML définit les clubs par leur championnat **actuel** (`domestic_competition_id`) et ne filtre ni la
+  saison de départ ni la qualité des transferts, alors que le graphe part des matchs joués depuis `SCOPE_FROM_SEASON` :
+  les deux univers de clubs diffèrent.
+- Le graphe contient aussi des clubs « légers » hors périmètre (acheteurs étrangers) : `hubs` peut les classer.

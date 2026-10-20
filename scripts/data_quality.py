@@ -4,8 +4,11 @@ Pure functions on the rows shaped by `scripts/seed_data.py` (no database), in th
 
 1. Loans. transfermarkt-datasets has no loan column. A loan shows up as a transfer X -> Y followed, for the same
    player, by the reverse move Y -> X within `LOAN_MAX_DAYS`, the return having no fee (0 or unknown). Both moves
-   get `is_loan = true` (the loan and its end). The detection runs on every transfer of the player, including
-   those dropped afterwards, so a loan whose return is planned in the future is still recognised.
+   get `is_loan = true` (the loan and its end). Pairs are matched from the most recent move backwards and a move
+   belongs to one pair at most: when a club buys a player then loans him back to the seller (Lukaku, Inter ->
+   Chelsea for 113 M then Chelsea -> Inter -> Chelsea), the loan is the later out-and-back, not the purchase.
+   The detection runs on every transfer of the player, including those dropped afterwards, so a loan whose
+   return is planned in the future is still recognised.
 2. Drops, first matching reason wins:
    - `before_scope`: no season, or a season before `SCOPE_FROM_SEASON` (outside the scope, not an error);
    - `future`: dated after the ingestion day (Transfermarkt lists planned ends of loan up to 2030);
@@ -30,7 +33,8 @@ PSEUDO_CLUBS = {
     515: "Without Club",
     2113: "Career break",
 }
-LOAN_MAX_DAYS = 400  # 13 months: a season-long loan plus the slack between the last game and June 30
+# Two seasons plus slack: Transfermarkt shows peaks of returns at 5-6, 10-12, 17-18 and 22-24 months.
+LOAN_MAX_DAYS = 760
 DUPLICATE_MAX_DAYS = 30
 DROP_REASONS = ("before_scope", "future", "same_club", "pseudo_club", "duplicate")
 
@@ -57,13 +61,27 @@ def mark_loans(rows: list[Row]) -> list[Row]:
         by_player[row["player_id"]].append(row)
     for moves in by_player.values():
         moves.sort(key=lambda row: (row["date"], row["transfer_id"]))
-        for out, back in zip(moves, moves[1:]):
-            reverse = back["from_club_id"] == out["to_club_id"] and back["to_club_id"] == out["from_club_id"]
-            days = (back["date"] - out["date"]).days
-            if reverse and out["from_club_id"] != out["to_club_id"] and 0 <= days <= LOAN_MAX_DAYS:
-                if back["fee_eur"] in (None, 0):
-                    out["is_loan"] = back["is_loan"] = True
+        index = len(moves) - 1
+        while index > 0:
+            out, back = moves[index - 1], moves[index]
+            if is_loan_pair(out, back):
+                out["is_loan"] = back["is_loan"] = True
+                index -= 2
+            else:
+                index -= 1
     return marked
+
+
+def is_loan_pair(out: Row, back: Row) -> bool:
+    """True when `back` reverses `out` within `LOAN_MAX_DAYS` without a fee."""
+    reverse = back["from_club_id"] == out["to_club_id"] and back["to_club_id"] == out["from_club_id"]
+    days = (back["date"] - out["date"]).days
+    return (
+        reverse
+        and out["from_club_id"] != out["to_club_id"]
+        and 0 <= days <= LOAN_MAX_DAYS
+        and back["fee_eur"] in (None, 0)
+    )
 
 
 def drop_reason(row: Row, from_season: int, today: date) -> str | None:

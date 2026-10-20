@@ -42,9 +42,34 @@ def test_paid_return_is_not_a_loan():
     assert [row["is_loan"] for row in rows] == [False, False]
 
 
-def test_return_after_thirteen_months_is_not_a_loan():
-    rows = mark_loans([move(1, date(2021, 7, 1), 10, 20), move(1, date(2022, 9, 1), 20, 10)])
-    assert [row["is_loan"] for row in rows] == [False, False]
+def test_two_season_loan_is_a_loan_but_not_a_longer_one():
+    two_seasons = mark_loans([move(1, date(2020, 9, 22), 10, 20), move(1, date(2022, 6, 30), 20, 10)])
+    longer = mark_loans([move(1, date(2020, 7, 1), 10, 20), move(1, date(2022, 9, 1), 20, 10)])
+    assert [row["is_loan"] for row in two_seasons] == [True, True]
+    assert [row["is_loan"] for row in longer] == [False, False]
+
+
+def test_purchase_then_loan_back_flags_only_the_loan():
+    rows = mark_loans(
+        [
+            move(1, date(2021, 8, 12), 10, 20, fee=113_000_000),  # 10 sells to 20
+            move(1, date(2022, 7, 1), 20, 10),  # 20 loans him back to 10
+            move(1, date(2023, 6, 30), 10, 20),  # end of loan
+        ]
+    )
+    assert [row["is_loan"] for row in rows] == [False, True, True]
+
+
+def test_two_loans_in_a_row():
+    rows = mark_loans(
+        [
+            move(1, date(2025, 2, 2), 10, 20),
+            move(1, date(2025, 8, 10), 20, 10),
+            move(1, date(2025, 8, 12), 10, 30),
+            move(1, date(2026, 6, 30), 30, 10),
+        ]
+    )
+    assert all(row["is_loan"] for row in rows)
 
 
 def test_only_consecutive_moves_of_the_same_player_count():

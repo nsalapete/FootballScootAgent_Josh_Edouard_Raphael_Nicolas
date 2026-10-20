@@ -29,6 +29,25 @@ MAX_RESULT_CHARS = 4000
 # Nature of what each hypothesis tool states; every other tool states verified facts.
 TOOL_NATURES: dict[str, Nature] = {"predicted_moves": "predicted", "rumours": "rumour"}
 
+# Schema given to the planner for `cypher_fallback` (mirrors docs/schema.md; the eval showed it guessing `p.id`).
+SCHEMA_HINT = (
+    "Schema: (:Player {player_id, name, position, sub_position, date_of_birth, market_value_eur})"
+    + "-[:PLAYS_FOR]->(:Club {club_id, name}) (current club); (:Player)-[:CITIZEN_OF]->(:Country {code, name}); "
+    + "(:Player)-[:MADE]->(:Transfer {transfer_id, date, season, fee_eur, is_loan}), "
+    + "(:Transfer)-[:FROM]->(:Club) (seller), (:Transfer)-[:TO]->(:Club) (buyer); "
+    + "(:Club)-[:PLAYS_IN {season}]->(:Competition {competition_id, name}); "
+    + "(:Player)-[:HAS_VALUATION]->(:Valuation {valuation_id, date, value_eur}); "
+    + "(:Player)-[:PLAYED_WITH {matches, first_season, last_season}]-(:Player) (match it without direction); "
+    + "(:Club)-[:SENDS_TO {count, total_fee_eur}]->(:Club); "
+    + "(:Article {url, source, published_at})-[:REPORTS]->(:Rumour {rumour_id, status, confidence, quote}), "
+    + "(:Rumour)-[:ABOUT]->(:Player), (:Rumour)-[:TARGET]->(:Club); "
+    + "(:Player)-[:PREDICTED_MOVE {prob, model_version}]->(:Club). "
+    + "There is NO `id` property: use player_id, club_id, transfer_id, competition_id, rumour_id. "
+    + "Always RETURN the id column of every entity you will mention (e.g. `p.player_id AS player_id`, "
+    + "`c.club_id AS club_id`, `t.transfer_id AS transfer_id`): rows without ids cannot be cited as evidence. "
+    + "Compute counts and sums in the query (count(), sum()) instead of adding numbers yourself."
+)
+
 # Keys of fallback rows that identify a node, and the label they prove.
 ID_KEYS = {
     "player_id": "Player",
@@ -127,13 +146,18 @@ def age_on(birth: date | None, today: date) -> int | None:
     return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
 
 
-def evidence_from_rows(rows: list[dict[str, Any]]) -> list[str]:
-    """Collect `Label:id` evidence from the id columns of free-form rows."""
+def evidence_from_rows(rows: Any) -> list[str]:
+    """Collect `Label:id` evidence from the id columns of free-form rows, nested nodes and lists included."""
     found: list[str] = []
-    for row in rows:
-        for key, value in row.items():
-            if key in ID_KEYS and value is not None:
+    if isinstance(rows, dict):
+        for key, value in rows.items():
+            if key in ID_KEYS and isinstance(value, (int, str)) and not isinstance(value, bool):
                 found.append(f"{ID_KEYS[key]}:{value}")
+            elif isinstance(value, (dict, list)):
+                found += evidence_from_rows(value)
+    elif isinstance(rows, list):
+        for row in rows:
+            found += evidence_from_rows(row)
     return list(dict.fromkeys(found))
 
 
@@ -178,8 +202,23 @@ class ToolBox:
         """Outgoing transfers of a club grouped by destination competition."""
         rows = self.clubs.pipeline(club_id, since=since, limit=limit)
         evidence = [f"Club:{club_id}"] + [f"Competition:{row.competition_id}" for row in rows]
-        data = {"club_id": club_id, "rows": [row.model_dump() for row in rows]}
+        data = {
+            "club_id": club_id,
+            "total_transfers": sum(row.transfers for row in rows),
+            "total_fee_eur": sum(row.total_fee_eur for row in rows),
+            "rows": [row.model_dump() for row in rows],
+        }
         return ToolResult(tool="club_pipeline", evidence_ids=evidence, data=data)
+
+    def player_profile(self, player_id: int) -> ToolResult:
+        """One player: position, age, market value and current club."""
+        player = self.players.get(player_id)
+        if player is None:
+            return failure("player_profile", f"unknown player_id {player_id}")
+        profile = player.model_dump(mode="json")
+        profile["age"] = age_on(player.date_of_birth, self.today)
+        evidence = [f"Player:{player_id}"] + ([f"Club:{player.club_id}"] if player.club_id is not None else [])
+        return ToolResult(tool="player_profile", evidence_ids=evidence, data=profile)
 
     def teammate_path(self, from_id: int, to_id: int, max_hops: int = 6) -> ToolResult:
         """Shortest chain of teammates between two players (at most 6 hops)."""
@@ -229,8 +268,13 @@ class ToolBox:
             nature = "rumour"
         elif "PREDICTED_" in check.query:
             nature = "predicted"
-        data = {"query": check.query, "rows": rows[:100]}
-        return ToolResult(tool="cypher_fallback", nature=nature, evidence_ids=evidence_from_rows(rows), data=data)
+        evidence = evidence_from_rows(rows)
+        data: dict[str, Any] = {"query": check.query, "rows": rows[:100]}
+        if not rows:
+            data["note"] = "No row: check the property names against the schema (there is no `id` property)."
+        elif not evidence:
+            data["note"] = "Rows carry no id column, so they cannot be cited: rerun the query returning the ids."
+        return ToolResult(tool="cypher_fallback", nature=nature, evidence_ids=evidence, data=data)
 
     # ---------- LangChain wiring ----------
 
@@ -241,15 +285,21 @@ class ToolBox:
             "search_players": (
                 self.search_players,
                 SearchArgs,
-                "Search players by position, sub-position, maximum age, maximum market value, competition.",
+                "Search players by position, sub-position, maximum age, maximum market value, competition. "
+                + "Results are sorted by market value, highest first (no filter = most valuable players).",
             ),
             "club_pipeline": (
                 self.club_pipeline,
                 PipelineArgs,
-                "Outgoing transfers of a club grouped by destination competition (counts and fees).",
+                "Outgoing transfers of a club grouped by destination competition, with the club totals.",
             ),
             "teammate_path": (self.teammate_path, PathArgs, "Shortest chain of teammates between two players."),
             "value_trend": (self.value_trend, PlayerArgs, "Market-value history of a player."),
+            "player_profile": (
+                self.player_profile,
+                PlayerArgs,
+                "One player's position, age, current market value and current club.",
+            ),
             "similar_players": (self.similar_players, SimilarArgs, "Players with a similar career profile."),
             "predicted_moves": (
                 self.predicted_moves,
@@ -264,7 +314,8 @@ class ToolBox:
             "cypher_fallback": (
                 self.cypher_fallback,
                 CypherArgs,
-                "Only when no other tool fits: one read-only Cypher query on the documented schema, LIMIT <= 100.",
+                "Only when no other tool fits: one read-only Cypher query, LIMIT <= 100, no semicolon. "
+                + SCHEMA_HINT,
             ),
         }
 

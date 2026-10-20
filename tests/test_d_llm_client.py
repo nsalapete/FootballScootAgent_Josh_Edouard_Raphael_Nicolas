@@ -139,3 +139,10 @@ def test_structured_falls_back_to_json_prompting_for_other_models(monkeypatch):
     use_provider(monkeypatch, "openai_compatible", OPENAI_API_KEY="sk-test", LLM_BASE_URL="https://x.example/v1")
     runnable = structured(get_chat_model("small"), Extraction)
     assert type(runnable).__name__ == "RunnableLambda"
+
+
+def test_small_model_gives_up_sooner(monkeypatch):
+    use_provider(monkeypatch, "openai_compatible", OPENAI_API_KEY="sk-test", LLM_BASE_URL="https://x.example/v1")
+    small, large = get_chat_model("small"), get_chat_model("large")
+    assert (small.request_timeout, small.max_retries) == (30, 1)
+    assert (large.request_timeout, large.max_retries) == (60, 2)

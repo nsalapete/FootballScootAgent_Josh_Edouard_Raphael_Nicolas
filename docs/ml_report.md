@@ -92,6 +92,12 @@ Honest reading:
 5. `model_version` = `lp-<model>-<yyyymmdd>`; a new run deletes the older `lp-` predictions, never the `fixture`
    ones of the test graph.
 
+Run of 2026-10-20 on the full graph (ingestion of A, 2,232 clubs, 17,856 players), 33 s including the write:
+**1,115 `PREDICTED_LINK`** (5 per scope club; corrected probability from 0.06 to 0.78, median 0.44) and
+**41,961 `PREDICTED_MOVE`** for 13,987 players. Most probable new pairs: SL Benfica -> Sporting CP (0.78),
+SL Benfica -> FC Porto (0.78), Sporting CP -> FC Porto (0.73), Udinese -> Fiorentina (0.72). Example: Bradley Barcola
+(Paris Saint-Germain) -> Olympique Marseille 0.61, RC Strasbourg 0.49, ESTAC Troyes 0.44.
+
 ## 6. How predictions are labelled "predicted"
 
 - Schema: `PREDICTED_*` relationships are a separate layer (`docs/schema.md`), never stored in `SENDS_TO` or `Rumour`.
@@ -107,4 +113,9 @@ Honest reading:
 - Horizon of two seasons only; the last window (2025-2026) is not labelled yet, so the live predictions are not
   evaluated.
 - Five topological features only: no fees, no league level, no player profile. Precision stays low in absolute terms.
+- **No direction**: the five features are symmetric in (seller, buyer), so A -> B and B -> A get the same probability
+  (Benfica -> Porto and Porto -> Benfica: 0.78 both). Directed features (out-degree of the seller, in-degree of the
+  buyer, signed PageRank gap) would be the next step.
+- **No rivalry or hierarchy**: the top pairs are domestic rivals (Benfica, Sporting, Porto) that share many partners
+  but rarely sell to each other; the model only sees the network around them.
 - Probability correction assumes the real rate of the next two seasons is close to the one of 2023-2024 (3.6 %).

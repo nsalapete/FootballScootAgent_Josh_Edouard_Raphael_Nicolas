@@ -59,7 +59,8 @@ unrelated to football transfers. List in `entity_names` every player or club nam
 
 PLANNER_PROMPT = """You are a football scouting analyst. Answer only from tool results, never from memory.
 Use the parameterised tools first; call `cypher_fallback` only when no other tool fits (read-only, LIMIT <= 100).
-Use at most {max_calls} tool calls. Known entities: {entities}. Stop calling tools once you have enough data."""
+Use at most {max_calls} tool calls. Known entities: {entities}. Stop calling tools once you have enough data.
+Any number you will state must appear in a tool result: let the tools or the query compute totals and counts."""
 
 WRITER_PROMPT = """Write the final answer to the user's question from the tool results below, and nothing else.
 Split it into short claims. For each claim:

@@ -27,3 +27,6 @@ One line per choice that the shared rules did not settle.
 - D6: structured output goes through `structured()`: native for Claude and the fake model, JSON schema in the prompt + Pydantic validation + one retry for OpenAI-compatible models (NanoGPT refuses both `json_schema` response formats and forced `tool_choice`).
 - D6: the evaluation scores answers automatically (expected names, numbers in any format, forbidden names, claim nature for rumours and predictions); it reloads the test database with the mini graph before the run.
 - D6: the cost is estimated from LangChain usage metadata and the NanoGPT public prices passed on the command line (`--price-small`, `--price-large`).
+- After D6: the `cypher_fallback` description carries the schema (keys, relationships, "no `id` property") and asks for id columns; evidence ids are also read from nested nodes and lists of fallback rows; empty or id-less results come back with a note telling the planner how to fix its query.
+- After D6: `player_profile` uses only B's `PlayerService.get` (position, age, value, current club); nationality and transfer details would need a new service method owned by B, so they stay with the fallback.
+- After D6: `club_pipeline` returns the club totals (transfers and fees) computed by the tool, so the agent never has to add numbers itself (the verifier removes computed figures).

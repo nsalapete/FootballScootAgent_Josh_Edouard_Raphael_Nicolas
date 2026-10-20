@@ -361,3 +361,45 @@ def test_cypher_fallback_on_the_mini_graph(neo4j_db):
     )
     assert result.error is None and result.nature == "rumour"
     assert result.evidence_ids == ["Rumour:r1", "Player:5", "Rumour:r2", "Player:3"]
+
+
+# ---------- fallback evidence, profile and totals ----------
+
+
+class ProfilePlayers(FakePlayers):
+    """Adds `get` to the fake player service."""
+
+    def get(self, player_id):
+        """Theo Garnier, or nobody."""
+        if player_id != 2:
+            return None
+        return PlayerSummary(player_id=2, name="Theo Garnier", date_of_birth=date(2001, 9, 3), club_id=4,
+                             club_name="Kingsbridge United", market_value_eur=25000000)
+
+
+def test_player_profile_tool():
+    tools = ToolBox(ProfilePlayers(), FakeClubs(), FakeGds(), FakeRumours())
+    tools.today = date(2026, 10, 21)
+    result = tools.run("player_profile", {"player_id": 2})
+    assert result.evidence_ids == ["Player:2", "Club:4"] and result.data["age"] == 25
+    assert result.data["club_name"] == "Kingsbridge United"
+    assert tools.run("player_profile", {"player_id": 99}).error == "unknown player_id 99"
+
+
+def test_pipeline_totals_are_computed_by_the_tool():
+    tools = ToolBox(FakePlayers(), FakeClubs(), FakeGds(), FakeRumours())
+    data = tools.run("club_pipeline", {"club_id": 7}).data
+    assert (data["total_transfers"], data["total_fee_eur"]) == (4, 59000000)
+
+
+def test_fallback_evidence_from_nested_nodes_and_notes():
+    rows = [{"p": {"player_id": 3, "name": "Joao Ferreira"}, "clubs": [{"club_id": 4}, {"club_id": 7}],
+             "flag": True, "transfer_id": "t01"}]
+    assert evidence_from_rows(rows) == ["Player:3", "Club:4", "Club:7", "Transfer:t01"]
+    tools = ToolBox(FakePlayers(), FakeClubs(), FakeGds(), FakeRumours())
+    tools.players.client.rows = [{"name": "Joao Ferreira"}]
+    assert "no id column" in tools.cypher_fallback("MATCH (p:Player) RETURN p.name AS name LIMIT 1").data["note"]
+    tools.players.client.rows = []
+    assert "no `id` property" in tools.cypher_fallback("MATCH (p:Player) RETURN p.name LIMIT 1").data["note"]
+    description = {tool.name: tool.description for tool in tools.as_langchain_tools()}["cypher_fallback"]
+    assert "player_id" in description and "There is NO `id` property" in description

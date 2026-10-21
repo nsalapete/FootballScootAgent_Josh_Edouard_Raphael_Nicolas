@@ -75,7 +75,8 @@ requête HTTP
 
 1. **Lecture** (recherche, chemin, filière…) : client → nginx (limite 20 req/s par IP) → routeur (validation) →
    service → `Neo4jClient.read` → JSON. Aucun appel externe.
-2. **Question à l'agent** (`POST /api/agent/ask`) : nginx (limite 10 req/min par IP) → `ScoutAgent` (LangGraph :
+2. **Question à l'agent** (`POST /api/agent/ask`, clé d'API si `AGENT_REQUIRE_API_KEY=true`) : nginx (limite
+   10 req/min par IP) → `ScoutAgent` (LangGraph :
    routage, planification, appels d'outils, rédaction, vérification des preuves) → outils = méthodes des services
    (et, en dernier recours, un Cypher généré puis validé par `CypherValidator`, exécuté en lecture) → fournisseur LLM
    en HTTPS. Chaque affirmation est étiquetée `verified`, `predicted` ou `rumour` avec ses preuves `Label:id`.
@@ -95,10 +96,11 @@ requête HTTP
   429 au-delà ; corps limité à 1 Mo ; `server_tokens off` ; en-têtes `X-Content-Type-Options: nosniff`,
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
 - Clé d'API (`X-API-Key`, comparée en temps constant) sur les routes qui écrivent dans le graphe ou dépensent du crédit
-  LLM : 401 si elle manque ou est fausse, 503 si `API_KEY` n'est pas configurée côté serveur.
+  LLM : 401 si elle manque ou est fausse, 503 si `API_KEY` n'est pas configurée côté serveur. L'agent l'exige aussi
+  quand le serveur tourne avec `AGENT_REQUIRE_API_KEY=true` (production) ; sans ce réglage (développement, tests,
+  démonstration sur le mini-graphe), il n'est protégé que par la limite de débit de nginx.
 - Cypher toujours paramétré ; secrets uniquement dans `.env` (ni dans l'image, grâce au `.dockerignore`, ni dans Git).
-- Limites connues : pas de TLS (à poser sur nginx en production) ; `/api/agent/ask` n'est protégé que par la limite
-  de débit.
+- Limites connues : pas de TLS (à poser sur nginx en production).
 
 ## Image Docker publiée
 
@@ -207,8 +209,9 @@ curl -X POST "$BASE/api/rumours/import" -H "X-API-Key: $API_KEY" \
      -H "Content-Type: application/json" -d '{"feed_urls": [], "max_articles": 20}'
 # 200 {"articles_seen":...,"articles_new":...,"rumours_created":...,"unresolved_names":...} ; 401 sans la clé
 
-curl -X POST "$BASE/api/agent/ask" -H "Content-Type: application/json" \
+curl -X POST "$BASE/api/agent/ask" -H "Content-Type: application/json" -H "X-API-Key: $API_KEY" \
      -d '{"question": "Quels lateraux gauches de moins de 23 ans valent moins de 10 M EUR ?"}'
+# (la clé n'est exigée que si le serveur tourne avec AGENT_REQUIRE_API_KEY=true : 401 sans elle)
 # 200 {"answer":"...","claims":[{"text":"...","nature":"verified","evidence_ids":["Player:5"]}],
 #      "removed_claims":[],"trace":[{"tool":"search_players", ...}],"refused":false,"needs_clarification":false}
 ```

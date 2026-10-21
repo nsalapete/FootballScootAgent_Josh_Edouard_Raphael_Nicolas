@@ -42,6 +42,15 @@ def club_hubs(
     return service.hubs(limit)
 
 
+@router.get("/clubs/gateways", response_model=list[ClubScore])
+def club_gateways(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    service: GdsService = Depends(get_gds_service),
+) -> list[ClubScore]:
+    """Clubs that bridge transfer markets, by betweenness on SENDS_TO (computed by the GDS refresh)."""
+    return service.gateways(limit)
+
+
 @router.get("/network/communities", response_model=list[Community])
 def communities(
     min_size: Annotated[int, Query(ge=1)] = 2,

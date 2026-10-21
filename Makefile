@@ -1,4 +1,4 @@
-.PHONY: help env venv install run docker-build docker-run docker-up docker-logs docker-down seed data test-db test-db-stop bench-db bench-db-stop test lint format clean tree
+.PHONY: help env venv install run docker-build docker-run docker-up docker-logs docker-down seed data test-db test-db-stop bench-db bench-db-stop bench-data bench test lint format clean tree
 
 TAG ?= football-scout-api:dev
 VENV ?= .venv
@@ -34,6 +34,8 @@ help:
 	@echo "  make test-db-stop   Arrête le Neo4j de test"
 	@echo "  make bench-db       Démarre le Neo4j de benchmark sur le port 7689"
 	@echo "  make bench-db-stop  Arrête le Neo4j de benchmark"
+	@echo "  make bench-data     Génère le graphe synthétique dans la base de benchmark (port 7689)"
+	@echo "  make bench          Mesure p50/p95 des services et les plans PROFILE (écrit docs/perf_results.json)"
 	@echo "  make test           Lance pytest avec couverture"
 	@echo "  make lint           Lance pylint (seuil 9.5)"
 	@echo "  make format         Formate le code avec black"
@@ -96,10 +98,19 @@ bench-db:
 	@if docker ps --format '{{.Names}}' | grep -q '^$(BENCH_DB)$$'; then echo "$(BENCH_DB) tourne déjà"; \
 	else docker run -d --rm --name $(BENCH_DB) -p 7689:7687 \
 	    -e NEO4J_AUTH=neo4j/benchpassword \
+	    -e NEO4J_PLUGINS='["graph-data-science"]' \
+	    -e NEO4J_dbms_security_procedures_unrestricted='gds.*' \
+	    -e NEO4J_server_memory_heap_max__size=2G \
 	    neo4j:5 && echo "Neo4j de benchmark en démarrage sur bolt://localhost:7689"; fi
 
 bench-db-stop:
 	-docker stop $(BENCH_DB)
+
+bench-data:
+	@$(PY) python -m scripts.bench_data
+
+bench:
+	@$(PY) python -m scripts.benchmark
 
 test:
 	@$(PY) pytest -q --cov=app --cov-report=term-missing --cov-report=xml

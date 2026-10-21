@@ -159,3 +159,14 @@ def test_load_universe_uses_the_ingestion_scope(duckdb_file):
     assert universe.countries == {1: "France", 2: "France", 3: "England", 4: "England"}
     edges = sorted(universe.edges.itertuples(index=False, name=None))
     assert edges == [(1, 2, 2021, 2), (2, 3, 2022, 1), (3, 99, 2022, 1)]
+
+
+def test_sliding_feature_window_keeps_labels_on_the_full_history():
+    # Window of 1 season: features only see 2021; "new" is still judged on 2019-2021.
+    windowed = build_split(Universe(EDGES, countries=COUNTRIES, feature_window=1), SPLIT)
+    full = build_split(UNIVERSE, SPLIT)
+    pd.testing.assert_frame_equal(windowed[["src", "dst", "label"]], full[["src", "dst", "label"]])
+    graph = training_graph(EDGES, SPLIT[0], window=1)
+    assert set(graph.edges) == {(4, 5), (5, 6), (2, 4)}
+    # (1, 4): common neighbours 2 and 3 on the full history, none in 2021 alone.
+    assert windowed.set_index(["src", "dst"]).loc[(1, 4), "common_neighbours"] == 0

@@ -16,7 +16,7 @@ from typing import Any, Callable, Literal
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from app.agent.guardrails import CypherValidator
+from app.agent.guardrails import CypherValidator, strip_literals
 from app.models.agent import Nature
 from app.models.players import PlayerSearch
 from app.services.clubs import ClubService
@@ -32,7 +32,8 @@ TOOL_NATURES: dict[str, Nature] = {"predicted_moves": "predicted", "rumours": "r
 # Schema given to the planner for `cypher_fallback` (mirrors docs/schema.md; the eval showed it guessing `p.id`).
 SCHEMA_HINT = (
     "Schema: (:Player {player_id, name, position, sub_position, date_of_birth, market_value_eur})"
-    + "-[:PLAYS_FOR]->(:Club {club_id, name}) (current club); (:Player)-[:CITIZEN_OF]->(:Country {code, name}); "
+    + "-[:PLAYS_FOR]->(:Club {club_id, name, pagerank, betweenness, community_id}) (current club; the three "
+    + "scores are written by GDS); (:Player)-[:CITIZEN_OF]->(:Country {code, name}); "
     + "(:Player)-[:MADE]->(:Transfer {transfer_id, date, season, fee_eur, is_loan}), "
     + "(:Transfer)-[:FROM]->(:Club) (seller), (:Transfer)-[:TO]->(:Club) (buyer); "
     + "(:Club)-[:PLAYS_IN {season}]->(:Competition {competition_id, name}); "
@@ -41,7 +42,9 @@ SCHEMA_HINT = (
     + "(:Club)-[:SENDS_TO {count, total_fee_eur}]->(:Club); "
     + "(:Article {url, source, published_at})-[:REPORTS]->(:Rumour {rumour_id, status, confidence, quote}), "
     + "(:Rumour)-[:ABOUT]->(:Player), (:Rumour)-[:TARGET]->(:Club); "
-    + "(:Player)-[:PREDICTED_MOVE {prob, model_version}]->(:Club). "
+    + "(:Player)-[:PREDICTED_MOVE {prob, model_version, horizon_seasons}]->(:Club), "
+    + "(:Club)-[:PREDICTED_LINK {prob, model_version, horizon_seasons}]->(:Club) (model hypotheses). "
+    + "Never RETURN `embedding` (64 floats per player). "
     + "There is NO `id` property: use player_id, club_id, transfer_id, competition_id, rumour_id. "
     + "Always RETURN the id column of every entity you will mention (e.g. `p.player_id AS player_id`, "
     + "`c.club_id AS club_id`, `t.transfer_id AS transfer_id`): rows without ids cannot be cited as evidence. "
@@ -128,10 +131,29 @@ class RumourArgs(BaseModel):
     status: Literal["pending", "confirmed", "expired", "contradicted"] | None = None
 
 
+class RankArgs(BaseModel):
+    """Arguments of the club rankings."""
+
+    limit: int = Field(10, ge=1, le=50)
+
+
 class CypherArgs(BaseModel):
     """Arguments of `cypher_fallback`."""
 
     query: str = Field(description="One read-only Cypher query with a LIMIT of at most 100")
+
+
+def query_nature(query: str) -> Nature:
+    """Nature of a generated query from the labels it names (string literals ignored: `'Rumour FC'` is a name).
+
+    Rumour wins over prediction; the verifier then checks each claim against its own evidence.
+    """
+    text = strip_literals(query)[0]
+    if re.search(r"\bRumour\b|\bArticle\b", text):
+        return "rumour"
+    if "PREDICTED_" in text:
+        return "predicted"
+    return "verified"
 
 
 def failure(tool: str, error: str, data: Any = None) -> ToolResult:
@@ -248,26 +270,37 @@ class ToolBox:
         moves = self.gds.predicted_moves(player_id, limit=5)
         evidence = [f"PREDICTED_MOVE:{move.player_id}->{move.club_id}" for move in moves]
         data = {"player_id": player_id, "predicted_moves": [move.model_dump() for move in moves]}
-        return ToolResult(tool="predicted_moves", nature="predicted", evidence_ids=evidence, data=data)
+        nature = TOOL_NATURES["predicted_moves"]
+        return ToolResult(tool="predicted_moves", nature=nature, evidence_ids=evidence, data=data)
 
     def player_rumours(self, player_id: int, status: str | None = None) -> ToolResult:
         """Press rumours about a player, with source, status and confidence: never facts."""
         found = self.rumours.for_player(player_id, status)
         evidence = [f"Rumour:{rumour.rumour_id}" for rumour in found]
         data = {"player_id": player_id, "rumours": [rumour.model_dump(mode="json") for rumour in found]}
-        return ToolResult(tool="rumours", nature="rumour", evidence_ids=evidence, data=data)
+        return ToolResult(tool="rumours", nature=TOOL_NATURES["rumours"], evidence_ids=evidence, data=data)
+
+    def club_hubs(self, limit: int = 10) -> ToolResult:
+        """Clubs by weighted PageRank, as stored by the last GDS refresh."""
+        clubs = self.gds.hubs(limit=limit)
+        data = {"metric": "pagerank", "clubs": [club.model_dump() for club in clubs]}
+        return ToolResult(tool="club_hubs", evidence_ids=[f"Club:{club.club_id}" for club in clubs], data=data)
+
+    def transfer_gateways(self, limit: int = 10) -> ToolResult:
+        """Clubs by betweenness, as stored by the last GDS refresh."""
+        clubs = self.gds.gateways(limit=limit)
+        data = {"metric": "betweenness", "clubs": [club.model_dump() for club in clubs]}
+        evidence = [f"Club:{club.club_id}" for club in clubs]
+        return ToolResult(tool="transfer_gateways", evidence_ids=evidence, data=data)
 
     def cypher_fallback(self, query: str) -> ToolResult:
         """Last resort: validated read-only Cypher, run in a read transaction."""
         check = self.validator.validate(query)
+        nature = query_nature(query)
         if not check.valid:
-            return failure("cypher_fallback", "; ".join(check.reasons), data={"query": query})
+            error = "; ".join(check.reasons)
+            return ToolResult(tool="cypher_fallback", nature=nature, data={"query": query}, error=error)
         rows = self.players.client.read(check.query)
-        nature: Nature = "verified"
-        if re.search(r"\bRumour\b|\bArticle\b", check.query):
-            nature = "rumour"
-        elif "PREDICTED_" in check.query:
-            nature = "predicted"
         evidence = evidence_from_rows(rows)
         data: dict[str, Any] = {"query": check.query, "rows": rows[:100]}
         if not rows:
@@ -300,11 +333,29 @@ class ToolBox:
                 PlayerArgs,
                 "One player's position, age, current market value and current club.",
             ),
-            "similar_players": (self.similar_players, SimilarArgs, "Players with a similar career profile."),
+            "similar_players": (
+                self.similar_players,
+                SimilarArgs,
+                "Players whose teammate network is close (FastRP on PLAYED_WITH): same squads and circles, "
+                + "NOT the same position, style or level.",
+            ),
+            "club_hubs": (
+                self.club_hubs,
+                RankArgs,
+                "Clubs ranked by weighted PageRank on SENDS_TO: clubs that RECEIVE many players from central "
+                + "clubs (not the biggest sellers).",
+            ),
+            "transfer_gateways": (
+                self.transfer_gateways,
+                RankArgs,
+                "Clubs ranked by betweenness on SENDS_TO: intermediaries on many seller-to-buyer routes.",
+            ),
             "predicted_moves": (
                 self.predicted_moves,
                 PlayerArgs,
-                "Clubs a player is PREDICTED to join by the ML model (a hypothesis, not a fact).",
+                "PREDICTED destinations (ML hypotheses, never facts): the probability is that the player's "
+                + "current club sends a player to that club within `horizon_seasons`, the same for every "
+                + "player of the club. Phrase it as an estimate, never 'X will join Y'.",
             ),
             "rumours": (
                 self.player_rumours,

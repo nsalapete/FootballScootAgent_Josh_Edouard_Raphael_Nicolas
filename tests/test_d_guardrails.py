@@ -44,21 +44,23 @@ REJECTED = [
     ("MATCH (p:Player) WITH p", "no_return"),
     ("MATCH (p:$($label)) RETURN p LIMIT 5", "dynamic"),
     ("", "empty"),
+    ("MATCH (p:Player {player_id: $id}) RETURN p LIMIT 1", "parameter"),
+    ("CALL gds.pageRank.stream('clubs') YIELD nodeId, score RETURN nodeId, score LIMIT 10", "procedure"),
 ]
 
 ACCEPTED = [
     "MATCH (p:Player) RETURN p.name AS name LIMIT 10",
-    "MATCH (p:Player {player_id: $id})-[:PLAYS_FOR]->(c:Club) RETURN c.name LIMIT 1",
+    "MATCH (p:Player {player_id: 1})-[:PLAYS_FOR]->(c:Club) RETURN c.name LIMIT 1",
     "MATCH (src:Club)<-[:FROM]-(t:Transfer)-[:TO]->(dst:Club) RETURN src.name, dst.name, t.fee_eur LIMIT 100",
     "MATCH p = shortestPath((a:Player {player_id: 1})-[:PLAYED_WITH*..6]-(b:Player {player_id: 4})) "
     "RETURN length(p) AS hops LIMIT 1",
-    "MATCH (a:Player)-[:PLAYED_WITH*1..3]-(b:Player) WHERE a.player_id = $id RETURN DISTINCT b.name LIMIT 20",
+    "MATCH (a:Player)-[:PLAYED_WITH*1..3]-(b:Player) WHERE a.player_id = 1 RETURN DISTINCT b.name LIMIT 20",
     # Write keywords inside strings and comments are ignored.
     "MATCH (p:Player) WHERE p.name = 'DROP; CREATE (x) DETACH DELETE' RETURN p LIMIT 5 // then DELETE everything",
     "MATCH (p:Player) WHERE p.name CONTAINS \"O\\\"Brien; SET\" RETURN p LIMIT 5",
     "MATCH (c:Club) RETURN c {.name, total: COUNT { (c)<-[:FROM]-(:Transfer) }} AS club LIMIT 5",
     "MATCH (p:Player) WHERE p:Player OR p:Club RETURN [x IN [p] WHERE x:Player | x.name] AS names LIMIT 5",
-    "CALL db.index.fulltext.queryNodes('player_name_ft', $name) YIELD node, score "
+    "CALL db.index.fulltext.queryNodes('player_name_ft', 'Gabriel') YIELD node, score "
     "RETURN node.name, score LIMIT 5",
     "MATCH (start:Player)-[:MADE]->(t:Transfer) WHERE t.date >= date('2022-01-01') "
     "RETURN start.name, t.fee_eur * 2 AS double_fee ORDER BY double_fee DESC LIMIT 10;",
@@ -122,7 +124,7 @@ def test_strip_literals_blanks_strings_and_comments():
 @pytest.mark.parametrize("query", ACCEPTED[:6])
 def test_accepted_queries_pass_explain_on_the_test_database(neo4j_db, query):
     result = validator.validate(query)
-    neo4j_db.read("EXPLAIN " + result.query, {"id": 1, "name": "Gabriel"})
+    neo4j_db.read("EXPLAIN " + result.query)
 
 
 @pytest.mark.neo4j

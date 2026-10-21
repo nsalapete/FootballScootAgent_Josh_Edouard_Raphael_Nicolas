@@ -146,3 +146,17 @@ def test_small_model_gives_up_sooner(monkeypatch):
     small, large = get_chat_model("small"), get_chat_model("large")
     assert (small.request_timeout, small.max_retries) == (30, 1)
     assert (large.request_timeout, large.max_retries) == (60, 2)
+
+
+def test_real_clients_are_reused_but_fake_ones_never(monkeypatch):
+    use_provider(monkeypatch, "openai_compatible", OPENAI_API_KEY="sk-test", LLM_BASE_URL="https://x.example/v1")
+    assert get_chat_model("large") is get_chat_model("large")
+    assert get_chat_model("small") is not get_chat_model("large")
+    use_provider(monkeypatch, "anthropic", ANTHROPIC_API_KEY="sk-test")
+    assert get_chat_model("large").temperature == 0
+    use_provider(monkeypatch, "fake")
+    assert get_chat_model("small") is not get_chat_model("small")
+
+
+def test_fake_model_returns_json_for_dicts():
+    assert FakeChatModel(script=[{"a": "b"}]).invoke("x").content == '{"a": "b"}'

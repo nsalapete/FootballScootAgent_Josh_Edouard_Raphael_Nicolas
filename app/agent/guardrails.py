@@ -56,11 +56,11 @@ ADMIN_KEYWORDS = (
 ADMIN_VERBS = ("START", "STOP", "ENABLE", "DEALLOCATE", "REALLOCATE")
 ADMIN_OBJECTS = ("DATABASE", "DATABASES", "SERVER", "SERVERS")
 
-# Read-only procedures a generated query may CALL. GDS algorithms are allowed in `stream`/`stats` mode only.
+# Read-only procedures a generated query may CALL. No GDS procedure: GDS 2.x needs a named in-memory projection,
+# which `GdsService.refresh` drops once its scores are written; generated queries read those stored properties.
 ALLOWED_PROCEDURES = frozenset(
     {"db.index.fulltext.queryNodes", "db.labels", "db.relationshipTypes", "db.propertyKeys"}
 )
-GDS_READ_MODES = ("stream", "stats")
 
 # Namespaces whose functions or procedures write, run dynamic Cypher, reach the file system or administer.
 DENIED_NAMESPACES = (
@@ -195,6 +195,7 @@ class CypherValidator:
             return ValidationResult(valid=False, query=query, reasons=reasons)
         tokens = tokenize(text)
         reasons += self._check_statements(tokens)
+        reasons += self._check_parameters(tokens)
         reasons += self._check_keywords(tokens)
         reasons += self._check_procedures(tokens)
         reasons += self._check_patterns(tokens)
@@ -208,6 +209,13 @@ class CypherValidator:
         """Only one statement: any semicolon left after removing the trailing one means several."""
         if ";" in tokens:
             return ["multiple_statements: only one statement is allowed (found ';')"]
+        return []
+
+    @staticmethod
+    def _check_parameters(tokens: list[str]) -> list[str]:
+        """The fallback runs a generated query without parameters: a `$name` would fail with ParameterMissing."""
+        if any(token.startswith("$") and len(token) > 1 for token in tokens):
+            return ["parameter: generated queries cannot use $parameters, inline the literal value"]
         return []
 
     @staticmethod
@@ -247,11 +255,8 @@ class CypherValidator:
 
     @staticmethod
     def _procedure_allowed(name: str) -> bool:
-        """True for allow-listed procedures and GDS algorithms in a read mode."""
-        if name in ALLOWED_PROCEDURES:
-            return True
-        parts = name.split(".")
-        return parts[0] == "gds" and len(parts) >= 3 and parts[-1] in GDS_READ_MODES
+        """True for allow-listed procedures only."""
+        return name in ALLOWED_PROCEDURES
 
     def _check_patterns(self, tokens: list[str]) -> list[str]:
         """Labels and relationship types against the allow-lists, and variable-length bounds."""

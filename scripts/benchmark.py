@@ -540,6 +540,7 @@ def gds_experiment(uri: str, password: str, samples: Samples, runs: int) -> dict
             gds.PROJECT_CLUBS: "projection clubs",
             gds.PAGERANK: "PageRank",
             gds.LOUVAIN: "Louvain",
+            gds.BETWEENNESS: "Betweenness",
             gds.PROJECT_TEAMMATES: "projection coéquipiers",
             gds.FASTRP: "FastRP",
             gds.DROP: "suppression d'une projection",
@@ -552,6 +553,7 @@ def gds_experiment(uri: str, password: str, samples: Samples, runs: int) -> dict
         reads = [
             ("hubs", lambda: service.hubs(20)),
             ("communities", lambda: service.communities(2)),
+            ("gateways", lambda: service.gateways(20)),
             ("similar_players", cycling(lambda pid: service.similar_players(pid, 10), samples.player_ids)),
         ]
         latencies = [
@@ -628,6 +630,20 @@ def report(results: dict[str, Any]) -> str:
     return "\n\n".join(parts)
 
 
+def measure_graph_queries(client: ProfilingClient, samples: Samples, runs: int) -> dict[str, Any]:
+    """Every measure except GDS: services, index experiments, pagination and paths."""
+    return {
+        "graph": client.read(SIZES)[0],
+        "pairs": {case: list(pair) for case, pair in samples.pairs.items()},
+        "services": bench_services(client, samples, runs),
+        "index_search": search_index_experiment(client, runs),
+        "index_pipeline": pipeline_index_experiment(client, samples.top_seller, runs),
+        "pagination": pagination_experiment(client, runs),
+        "paths": path_experiment(client, samples),
+        "all_paths": all_paths_experiment(client, samples),
+    }
+
+
 def main() -> None:
     """Entry point: run every measure on the benchmark database and save the results."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -637,6 +653,7 @@ def main() -> None:
     parser.add_argument("--skip-gds", action="store_true")
     parser.add_argument("--output", type=Path, default=RESULTS)
     parser.add_argument("--report-only", action="store_true", help="print the tables of an existing --output")
+    parser.add_argument("--only-gds", action="store_true", help="re-measure GDS only, into an existing --output")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # the Windows console encoding cannot print every character
     if args.report_only:
@@ -646,16 +663,10 @@ def main() -> None:
     client = ProfilingClient(args.uri, args.password)
     try:
         samples = gather(client)
-        results: dict[str, Any] = {
-            "graph": client.read(SIZES)[0],
-            "pairs": {case: list(pair) for case, pair in samples.pairs.items()},
-            "services": bench_services(client, samples, args.runs),
-            "index_search": search_index_experiment(client, args.runs),
-            "index_pipeline": pipeline_index_experiment(client, samples.top_seller, args.runs),
-            "pagination": pagination_experiment(client, args.runs),
-            "paths": path_experiment(client, samples),
-            "all_paths": all_paths_experiment(client, samples),
-        }
+        if args.only_gds:  # e.g. right after restarting the database, to time a cold refresh again
+            results = json.loads(args.output.read_text(encoding="utf-8"))
+        else:
+            results = measure_graph_queries(client, samples, args.runs)
     finally:
         client.close()
     if not args.skip_gds:

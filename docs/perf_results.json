@@ -913,69 +913,79 @@
   ],
   "gds": {
     "refresh_s": {
-      "1er recalcul": 6.546,
-      "2e recalcul": 2.438
+      "1er recalcul": 9.014,
+      "2e recalcul": 2.568
     },
     "steps": [
       {
         "refresh": "1er recalcul",
         "step": "projection clubs",
-        "seconds": 2.5
+        "seconds": 2.37
       },
       {
         "refresh": "1er recalcul",
         "step": "PageRank",
-        "seconds": 0.55
+        "seconds": 0.56
       },
       {
         "refresh": "1er recalcul",
         "step": "Louvain",
-        "seconds": 1.47
+        "seconds": 2.06
+      },
+      {
+        "refresh": "1er recalcul",
+        "step": "Betweenness",
+        "seconds": 0.98
       },
       {
         "refresh": "1er recalcul",
         "step": "projection coéquipiers",
-        "seconds": 0.45
+        "seconds": 0.75
       },
       {
         "refresh": "1er recalcul",
         "step": "FastRP",
-        "seconds": 1.51
+        "seconds": 1.87
       },
       {
         "refresh": "1er recalcul",
         "step": "suppression d'une projection",
-        "seconds": 0.05
+        "seconds": 0.38
       },
       {
         "refresh": "1er recalcul",
         "step": "suppression d'une projection",
-        "seconds": 0.01
+        "seconds": 0.04
       },
       {
         "refresh": "2e recalcul",
         "step": "projection clubs",
-        "seconds": 0.07
+        "seconds": 0.11
       },
       {
         "refresh": "2e recalcul",
         "step": "PageRank",
-        "seconds": 0.09
+        "seconds": 0.15
       },
       {
         "refresh": "2e recalcul",
         "step": "Louvain",
-        "seconds": 1.66
+        "seconds": 1.48
+      },
+      {
+        "refresh": "2e recalcul",
+        "step": "Betweenness",
+        "seconds": 0.19
       },
       {
         "refresh": "2e recalcul",
         "step": "projection coéquipiers",
-        "seconds": 0.17
+        "seconds": 0.12
       },
       {
         "refresh": "2e recalcul",
         "step": "FastRP",
-        "seconds": 0.41
+        "seconds": 0.49
       },
       {
         "refresh": "2e recalcul",
@@ -991,36 +1001,48 @@
     "reads": [
       {
         "method": "hubs",
-        "p50_ms": 6.3,
-        "p95_ms": 9.7,
+        "p50_ms": 9.7,
+        "p95_ms": 19.6,
         "runs": 30,
         "db_hits": 1221,
         "rows": 20,
-        "server_ms": 12,
+        "server_ms": 53,
         "leaves": [
           "NodeByLabelScan"
         ]
       },
       {
         "method": "communities",
-        "p50_ms": 7.8,
-        "p95_ms": 12.6,
+        "p50_ms": 10.3,
+        "p95_ms": 23.4,
         "runs": 30,
         "db_hits": 2001,
         "rows": 8,
-        "server_ms": 18,
+        "server_ms": 34,
+        "leaves": [
+          "NodeByLabelScan"
+        ]
+      },
+      {
+        "method": "gateways",
+        "p50_ms": 9.1,
+        "p95_ms": 19.7,
+        "runs": 30,
+        "db_hits": 1221,
+        "rows": 20,
+        "server_ms": 31,
         "leaves": [
           "NodeByLabelScan"
         ]
       },
       {
         "method": "similar_players",
-        "p50_ms": 295.0,
-        "p95_ms": 549.2,
+        "p50_ms": 245.9,
+        "p95_ms": 611.6,
         "runs": 30,
         "db_hits": 200004,
         "rows": 10,
-        "server_ms": 370,
+        "server_ms": 264,
         "leaves": [
           "NodeUniqueIndexSeek",
           "NodeByLabelScan"
@@ -1028,13 +1050,13 @@
       },
       {
         "method": "similar_players par index vectoriel",
-        "recall_at_10": 0.96,
-        "p50_ms": 12.3,
-        "p95_ms": 17.0,
+        "recall_at_10": 0.97,
+        "p50_ms": 13.0,
+        "p95_ms": 19.4,
         "runs": 30,
         "db_hits": 51,
         "rows": 10,
-        "server_ms": 35,
+        "server_ms": 32,
         "leaves": [
           "NodeUniqueIndexSeek"
         ]

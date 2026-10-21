@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.services.gds import GdsService
 from ml.dataset import FEATURES
 from ml.train_link_prediction import (
     adjust_prior,
@@ -86,7 +87,9 @@ CREATE (:Player {player_id: id, name: 'test-c-player ' + toString(id)})-[:PLAYS_
 """
 MOVES = """
 MATCH (p:Player)-[m:PREDICTED_MOVE]->(c:Club) WHERE p.player_id IN $players
-RETURN p.player_id AS player, c.club_id AS club, m.prob AS prob, m.model_version AS version ORDER BY player
+RETURN p.player_id AS player, c.club_id AS club, m.prob AS prob, m.model_version AS version,
+       m.horizon_seasons AS horizon, m.trained_until AS trained_until
+ORDER BY player
 """
 
 
@@ -112,8 +115,8 @@ def test_write_predictions_matches_existing_clubs_only(own_nodes):
     assert not own_nodes.read("MATCH (c:Club {club_id: -9999}) RETURN c LIMIT 1")
     moves = own_nodes.read(MOVES, {"players": PLAYERS})
     assert moves == [
-        {"player": -9402, "club": -9302, "prob": 0.3, "version": "lp-test-c-1"},
-        {"player": -9401, "club": -9302, "prob": 0.3, "version": "lp-test-c-1"},
+        {"player": -9402, "club": -9302, "prob": 0.3, "version": "lp-test-c-1", "horizon": 2, "trained_until": 2024},
+        {"player": -9401, "club": -9302, "prob": 0.3, "version": "lp-test-c-1", "horizon": 2, "trained_until": 2024},
     ]
 
 
@@ -125,3 +128,11 @@ def test_new_version_replaces_the_old_one_but_not_the_fixture(own_nodes):
         "MATCH ()-[r:PREDICTED_LINK|PREDICTED_MOVE]->() RETURN DISTINCT r.model_version AS version ORDER BY version"
     )
     assert [row["version"] for row in versions] == ["fixture", "lp-test-c-2"]
+
+
+@pytest.mark.neo4j
+def test_api_model_carries_the_horizon_and_the_basis(own_nodes):
+    write_predictions(own_nodes, [{"src": -9301, "dst": -9302, "prob": 0.3}], "lp-test-c-1")
+    move = GdsService(own_nodes).predicted_moves(-9401)[0]
+    assert (move.club_id, move.probability, move.horizon_seasons, move.trained_until) == (-9302, 0.3, 2, 2024)
+    assert move.nature == "predicted" and move.basis == "club_pair"

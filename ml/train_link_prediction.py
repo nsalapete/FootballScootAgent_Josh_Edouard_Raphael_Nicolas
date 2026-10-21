@@ -16,7 +16,7 @@ Protocol (details in `docs/ml_report.md`):
 
 import argparse
 import json
-from datetime import date
+from dataclasses import replace
 from pathlib import Path
 
 import joblib
@@ -32,6 +32,7 @@ from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from app.config import get_settings
 from app.database.neo4j import Neo4jClient
 from ml.dataset import (
+    AS_OF,
     FEATURES,
     SEED,
     TEST_SPLIT,
@@ -39,6 +40,7 @@ from ml.dataset import (
     Universe,
     build_full_split,
     build_split,
+    feature_graph,
     load_universe,
     open_pairs,
     pair_features,
@@ -49,6 +51,11 @@ ARTIFACTS = Path(__file__).resolve().parent / "artifacts"
 VERSION_PREFIX = "lp-"
 BASELINE = "common_neighbours"
 VALIDATION_SPLIT = (2018, (2019, 2020))  # fit window of the model selection
+# Features on the 4 seasons before each cut-off: every split then sees the same number of seasons (the fit window
+# 2015-2018 has only 4), so count features keep the scale the model learnt. Labels still use the full history.
+FEATURE_WINDOW = 4
+HORIZON_SEASONS = 2  # a probability means "this pair trades within the next 2 seasons"
+TRAINED_UNTIL = max(TEST_SPLIT[1])  # last season whose outcome the final model has seen
 TOP_K = (50, 100)
 LINKS_PER_CLUB = 5
 MOVES_PER_PLAYER = 3
@@ -69,7 +76,7 @@ UNWIND $rows AS row
 MATCH (src:Club {club_id: row.src})
 MATCH (dst:Club {club_id: row.dst})
 MERGE (src)-[r:PREDICTED_LINK {model_version: $version}]->(dst)
-SET r.prob = row.prob
+SET r.prob = row.prob, r.horizon_seasons = $horizon, r.trained_until = $trained_until
 RETURN count(r) AS written
 """
 
@@ -85,7 +92,7 @@ WITH p, collect({club: dst, prob: prob})[..$per_player] AS top
 UNWIND top AS move
 WITH p, move.club AS dst, move.prob AS prob
 MERGE (p)-[m:PREDICTED_MOVE {model_version: $version}]->(dst)
-SET m.prob = prob
+SET m.prob = prob, m.horizon_seasons = $horizon, m.trained_until = $trained_until
 RETURN count(m) AS written
 """
 
@@ -148,9 +155,11 @@ def compare(splits: dict[str, pd.DataFrame]) -> tuple[dict[str, dict], str]:
 
 
 def score_open_pairs(model, universe: Universe, sample_rate: float, true_rate: float) -> pd.DataFrame:
-    """Probability of every open pair of scope clubs on the graph of every known season."""
-    graph = training_graph(universe.edges, int(universe.edges["season"].max()))
-    frame = pair_features(graph, open_pairs(graph, universe.clubs), universe.countries)
+    """Probability of every open pair of scope clubs (never traded since the scope start), features on the
+    `feature_window` latest seasons."""
+    latest = int(universe.edges["season"].max())
+    history = training_graph(universe.edges, latest)
+    frame = pair_features(feature_graph(universe, latest), open_pairs(history, universe.clubs), universe.countries)
     frame["prob"] = adjust_prior(model.predict_proba(frame[FEATURES])[:, 1], sample_rate, true_rate)
     return frame
 
@@ -167,19 +176,24 @@ def top_per_source(scored: pd.DataFrame, per_source: int = LINKS_PER_CLUB) -> li
 def write_predictions(
     client: Neo4jClient, links: list[dict], version: str, moves_per_player: int = MOVES_PER_PLAYER
 ) -> dict[str, int]:
-    """Replace older `lp-` predictions by `links` and the player moves derived from them."""
+    """Replace older `lp-` predictions by `links` and the player moves derived from them.
+
+    Every relationship also carries its horizon (`horizon_seasons`) and the last season the model learnt from
+    (`trained_until`), so a probability is never shown without its time frame.
+    """
     deleted = 1
     while deleted:
         deleted = client.write(DELETE_OLD, {"prefix": VERSION_PREFIX, "version": version})[0]["deleted"]
+    meta = {"version": version, "horizon": HORIZON_SEASONS, "trained_until": TRAINED_UNTIL}
     written_links = sum(
-        client.write(WRITE_LINKS, {"rows": links[start : start + BATCH_SIZE], "version": version})[0]["written"]
+        client.write(WRITE_LINKS, {"rows": links[start : start + BATCH_SIZE], **meta})[0]["written"]
         for start in range(0, len(links), BATCH_SIZE)
     )
     clubs = sorted({row["src"] for row in links})
     written_moves = sum(
-        client.write(
-            WRITE_MOVES, {"clubs": clubs[start : start + 50], "version": version, "per_player": moves_per_player}
-        )[0]["written"]
+        client.write(WRITE_MOVES, {"clubs": clubs[start : start + 50], "per_player": moves_per_player, **meta})[0][
+            "written"
+        ]
         for start in range(0, len(clubs), 50)
     )
     return {"predicted_links": written_links, "predicted_moves": written_moves}
@@ -210,7 +224,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-write", action="store_true", help="train and evaluate only, do not touch Neo4j")
     args = parser.parse_args(argv)
 
-    universe = load_universe()
+    universe = replace(load_universe(), feature_window=FEATURE_WINDOW)
     splits = {
         "fit": build_split(universe, VALIDATION_SPLIT),
         "validation": build_full_split(universe, TRAIN_SPLIT),
@@ -221,7 +235,7 @@ def main(argv: list[str] | None = None) -> None:
     print(markdown_table(results))
     print(f"chosen on temporal validation: {chosen}")
 
-    version = f"{VERSION_PREFIX}{chosen}-{date.today():%Y%m%d}"
+    version = f"{VERSION_PREFIX}{chosen}-{AS_OF:%Y%m%d}"
     model, links, rates = final_model(universe, chosen)
     ARTIFACTS.mkdir(exist_ok=True)
     joblib.dump({"model": model, "features": FEATURES, "version": version}, ARTIFACTS / "link_prediction.joblib")

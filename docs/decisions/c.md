@@ -79,3 +79,19 @@ One line per choice not settled by `CLAUDE.md`, in the order it was made.
   season: leakage), pair feature = cosine of the club embeddings. Validation AUC-PR 0.150 to 0.152 over 9 runs
   (3 sizes x 3 seeds) vs 0.152 without; test 0.159 vs 0.160. It duplicates the common-neighbour signal. The
   experiment stays reproducible in `ml/fastrp_experiment.py`; the model keeps five features.
+- **C3 fix · sliding feature window of 4 seasons** (review of B on #23): features on the 4 seasons ending at each
+  cut-off, so every split sees the same number of seasons (the fit window 2015-2018 has only 4) and count features
+  keep the scale the model learnt. "New pair" is still judged on the full history since 2015 (otherwise old pairs
+  would count as new and the task would change). Validation AUC-PR 0.1526 (vs 0.1517 with growing windows; 3 and 2
+  seasons give 0.153 and 0.152): chosen for the principle and a validation tie, not on the test.
+- **C3 fix · pinned date** `AS_OF = 2026-10-20` instead of `date.today()` for the "future transfer" rule, and in
+  `model_version`: a run only changes when the DuckDB file does.
+- **C3 fix · horizon on predictions** (review of B on #27): `PREDICTED_LINK` / `PREDICTED_MOVE` also carry
+  `horizon_seasons = 2` and `trained_until = 2024` (last labelled season the final model saw); `PredictedMove` gets the
+  optional fields `horizon_seasons`, `trained_until` and `basis = "club_pair"` (same answer for every player of a club).
+- **C4 fix · embeddings fed as vectors** (review of B on #28): Hadamard product of the two undirected embeddings (64
+  features) and a directed variant (seller's embedding on its sales x buyer's embedding on its purchases): validation
+  0.134 to 0.146 over 3 seeds, below 0.153 without; cosine 0.153 (no gain). FastRP stays out of the model.
+- **C1 · warm refresh**: a second refresh on the full graph takes 1.8 s (project clubs 0.23 s, PageRank 0.24 s,
+  Louvain 0.58 s, project teammates 0.27 s, FastRP 0.43 s); the 12.6 s first run pays the GDS warm-up of a fresh JVM.
+  `similar_players` warm: p50 92 ms, p95 195 ms.

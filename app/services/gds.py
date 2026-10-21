@@ -110,7 +110,7 @@ LIMIT $k
 PREDICTED_MOVES = """
 MATCH (p:Player {player_id: $player_id})-[m:PREDICTED_MOVE]->(c:Club)
 RETURN p.player_id AS player_id, c.club_id AS club_id, c.name AS club_name, m.prob AS probability,
-       m.model_version AS model_version
+       m.model_version AS model_version, m.horizon_seasons AS horizon_seasons, m.trained_until AS trained_until
 ORDER BY probability DESC, club_id
 LIMIT $limit
 """

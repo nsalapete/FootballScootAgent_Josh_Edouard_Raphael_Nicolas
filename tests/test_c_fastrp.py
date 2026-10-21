@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ml.fastrp_experiment import fastrp, with_fastrp_cosine
+from ml.fastrp_experiment import fastrp, with_embedding_product, with_fastrp_cosine
 
 
 def two_triangles() -> nx.DiGraph:
@@ -41,3 +41,22 @@ def test_direction_does_not_matter():
     reversed_graph = graph.reverse(copy=True)
     left, right = fastrp(graph, 8, seed=1), fastrp(reversed_graph, 8, seed=1)
     assert all(left[node] == pytest.approx(right[node]) for node in graph)
+
+
+def test_directed_embeddings_follow_the_roles():
+    # Club 1 only sells (to 2 and 3); club 4 only buys (from 2 and 3).
+    graph = nx.DiGraph()
+    graph.add_weighted_edges_from([(1, 2, 1), (1, 3, 1), (2, 4, 1), (3, 4, 1)], weight="count")
+    outgoing, incoming = fastrp(graph, 16, seed=5, direction="out"), fastrp(graph, 16, seed=5, direction="in")
+    assert np.linalg.norm(outgoing[4]) == 0  # never sold: nothing to average
+    assert np.linalg.norm(incoming[1]) == 0  # never bought
+    assert np.linalg.norm(outgoing[1]) > 0 and np.linalg.norm(incoming[4]) > 0
+
+
+def test_embedding_product_columns():
+    frame = pd.DataFrame({"src": [1, 9], "dst": [2, 1], "label": [1, 0]})
+    extended = with_embedding_product(frame, two_triangles(), directed=False, seed=1)
+    assert [column for column in extended.columns if column.startswith("emb_")] == [f"emb_{i}" for i in range(64)]
+    assert (extended.loc[1, [f"emb_{i}" for i in range(64)]] == 0).all()  # unknown club 9: zero product
+    directed = with_embedding_product(frame, two_triangles(), directed=True, seed=1)
+    assert len(directed) == 2 and directed["label"].tolist() == [1, 0]

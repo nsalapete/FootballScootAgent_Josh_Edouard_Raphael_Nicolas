@@ -38,6 +38,10 @@ class PredictedMove(BaseModel):
     probability: float
     model_version: str
     nature: Literal["predicted"] = "predicted"
+    # The probability is the one of the pair (current club, destination): same answer for every player of a club.
+    basis: Literal["club_pair"] = "club_pair"
+    horizon_seasons: int | None = None  # the pair trades within this many seasons (None for older predictions)
+    trained_until: int | None = None  # last season whose outcome the model learnt from
 
 
 class GdsRefreshReport(BaseModel):

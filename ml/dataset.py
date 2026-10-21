@@ -45,6 +45,9 @@ NEGATIVES_PER_POSITIVE = 5
 TEST_SPLIT = (2022, (2023, 2024))  # graph up to 2022, new pairs of 2023 and 2024
 TRAIN_SPLIT = (2020, (2021, 2022))  # same protocol two seasons earlier, to fit the model
 EDGE_COLUMNS = ["src", "dst", "season", "count"]
+# Transfers dated after this day are not facts yet. Pinned (not `date.today()`) so that a run is reproducible:
+# the dataset only changes when the DuckDB file does. Date of the run documented in docs/ml_report.md.
+AS_OF = date(2026, 10, 20)
 
 # Country of a scope club: the one of the competition it played in during its latest scope season.
 COUNTRIES_SQL = """
@@ -61,6 +64,9 @@ class Universe:
     edges: pd.DataFrame
     clubs: frozenset[int] = field(default_factory=frozenset)
     countries: dict[int, str] = field(default_factory=dict)
+    # Number of seasons up to the cut-off used for the features (None = every season since the scope start).
+    # The history that decides whether a pair is new always covers every season.
+    feature_window: int | None = None
 
 
 def edges_from_transfers(rows: list[dict]) -> pd.DataFrame:
@@ -91,16 +97,25 @@ def load_universe(
         clubs = frozenset(int(row["club_id"]) for row in fetch(con, "SELECT club_id FROM scope_clubs"))
         countries = {int(row["club_id"]): row["country"] for row in fetch(con, COUNTRIES_SQL)}
         raw = fetch(con, TRANSFERS_SQL)
-    cleaned = clean_transfers([shape_transfer(item) for item in raw], scope["from_season"], today or date.today())
+    cleaned = clean_transfers([shape_transfer(item) for item in raw], scope["from_season"], today or AS_OF)
     return Universe(edges=edges_from_transfers(cleaned.rows), clubs=clubs, countries=countries)
 
 
-def training_graph(edges: pd.DataFrame, until: int) -> nx.DiGraph:
-    """Directed graph of every transfer up to season `until` (included), weighted by count."""
+def training_graph(edges: pd.DataFrame, until: int, window: int | None = None) -> nx.DiGraph:
+    """Directed graph of the transfers up to season `until` (included), weighted by count.
+
+    With `window`, only the `window` seasons ending at `until` are kept (sliding window of constant length).
+    """
     graph = nx.DiGraph()
-    past = edges[edges["season"] <= until].groupby(["src", "dst"], as_index=False)["count"].sum()
+    kept = edges[(edges["season"] <= until) & ((edges["season"] > until - window) if window else True)]
+    past = kept.groupby(["src", "dst"], as_index=False)["count"].sum()
     graph.add_weighted_edges_from(past.itertuples(index=False, name=None), weight="count")
     return graph
+
+
+def feature_graph(universe: Universe, until: int) -> nx.DiGraph:
+    """Graph the features are computed on: the `feature_window` seasons ending at `until` (all seasons if None)."""
+    return training_graph(universe.edges, until, universe.feature_window)
 
 
 def candidate_clubs(graph: nx.DiGraph, clubs: frozenset[int]) -> set[int]:
@@ -182,7 +197,7 @@ def build_split(
     excluded = set(zip(window["src"], window["dst"]))
     negatives = sample_negatives(graph, excluded, negatives_per_positive * len(positives), seed, universe.clubs)
     pairs = sorted(positives) + negatives
-    frame = pair_features(graph, pairs, universe.countries)
+    frame = pair_features(feature_graph(universe, train_until), pairs, universe.countries)
     frame["label"] = [1] * len(positives) + [0] * len(negatives)
     return frame
 
@@ -202,7 +217,7 @@ def build_full_split(universe: Universe, split: tuple[int, tuple[int, ...]]) -> 
     graph = training_graph(universe.edges, train_until)
     positives = new_pairs(universe.edges, graph, target_seasons, universe.clubs)
     pairs = open_pairs(graph, universe.clubs)
-    frame = pair_features(graph, pairs, universe.countries)
+    frame = pair_features(feature_graph(universe, train_until), pairs, universe.countries)
     frame["label"] = [int(pair in positives) for pair in pairs]
     return frame
 

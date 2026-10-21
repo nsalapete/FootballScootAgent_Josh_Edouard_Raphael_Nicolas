@@ -44,12 +44,12 @@
     {
       "method": "search",
       "case": "poste + âge (Defender, ≤ 23 ans)",
-      "p50_ms": 17.5,
-      "p95_ms": 33.7,
+      "p50_ms": 14.9,
+      "p95_ms": 21.9,
       "runs": 30,
-      "db_hits": 12443,
+      "db_hits": 12506,
       "rows": 21,
-      "server_ms": 163,
+      "server_ms": 86,
       "leaves": [
         "NodeIndexSeek"
       ]
@@ -57,12 +57,12 @@
     {
       "method": "search",
       "case": "sous-poste + budget (Left-Back, ≤ 5 M€)",
-      "p50_ms": 22.9,
-      "p95_ms": 45.1,
+      "p50_ms": 10.1,
+      "p95_ms": 20.0,
       "runs": 30,
-      "db_hits": 1022,
+      "db_hits": 1085,
       "rows": 21,
-      "server_ms": 107,
+      "server_ms": 36,
       "leaves": [
         "NodeIndexSeekByRange"
       ]
@@ -70,12 +70,12 @@
     {
       "method": "search",
       "case": "compétition (FR1)",
-      "p50_ms": 34.7,
-      "p95_ms": 67.4,
+      "p50_ms": 20.1,
+      "p95_ms": 26.6,
       "runs": 30,
-      "db_hits": 9662,
+      "db_hits": 10303,
       "rows": 22,
-      "server_ms": 156,
+      "server_ms": 59,
       "leaves": [
         "DirectedRelationshipTypeScan",
         "NodeIndexScan",
@@ -85,12 +85,12 @@
     {
       "method": "search",
       "case": "sans filtre, page 1",
-      "p50_ms": 9.2,
-      "p95_ms": 16.4,
+      "p50_ms": 7.6,
+      "p95_ms": 12.7,
       "runs": 30,
-      "db_hits": 543,
+      "db_hits": 609,
       "rows": 21,
-      "server_ms": 86,
+      "server_ms": 22,
       "leaves": [
         "NodeIndexScan"
       ]
@@ -98,12 +98,12 @@
     {
       "method": "search",
       "case": "sans filtre, page 2 (curseur)",
-      "p50_ms": 7.7,
-      "p95_ms": 22.7,
+      "p50_ms": 9.6,
+      "p95_ms": 20.9,
       "runs": 30,
-      "db_hits": 521,
+      "db_hits": 584,
       "rows": 21,
-      "server_ms": 36,
+      "server_ms": 49,
       "leaves": [
         "NodeIndexSeekByRange"
       ]
@@ -111,12 +111,12 @@
     {
       "method": "get",
       "case": "joueur au hasard",
-      "p50_ms": 6.8,
-      "p95_ms": 12.1,
+      "p50_ms": 5.2,
+      "p95_ms": 9.9,
       "runs": 30,
-      "db_hits": 21,
+      "db_hits": 24,
       "rows": 1,
-      "server_ms": 29,
+      "server_ms": 20,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -124,12 +124,12 @@
     {
       "method": "value_trend",
       "case": "joueur au hasard",
-      "p50_ms": 6.1,
-      "p95_ms": 11.1,
+      "p50_ms": 5.4,
+      "p95_ms": 12.7,
       "runs": 30,
-      "db_hits": 19,
+      "db_hits": 22,
       "rows": 2,
-      "server_ms": 24,
+      "server_ms": 16,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -137,12 +137,12 @@
     {
       "method": "resolve",
       "case": "nom exact",
-      "p50_ms": 15.2,
-      "p95_ms": 45.1,
+      "p50_ms": 14.3,
+      "p95_ms": 36.7,
       "runs": 30,
       "db_hits": 2585,
       "rows": 5,
-      "server_ms": 40,
+      "server_ms": 32,
       "leaves": [
         "ProcedureCall"
       ]
@@ -150,12 +150,12 @@
     {
       "method": "resolve",
       "case": "nom avec une faute",
-      "p50_ms": 10.6,
-      "p95_ms": 17.3,
+      "p50_ms": 17.2,
+      "p95_ms": 34.7,
       "runs": 30,
       "db_hits": 1585,
       "rows": 5,
-      "server_ms": 7,
+      "server_ms": 9,
       "leaves": [
         "ProcedureCall"
       ]
@@ -163,12 +163,12 @@
     {
       "method": "teammate_path",
       "case": "4 sauts",
-      "p50_ms": 6.8,
-      "p95_ms": 18.6,
+      "p50_ms": 6.2,
+      "p95_ms": 11.5,
       "runs": 30,
-      "db_hits": 172,
+      "db_hits": 206,
       "rows": 1,
-      "server_ms": 40,
+      "server_ms": 32,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -176,10 +176,10 @@
     {
       "method": "teammate_path",
       "case": "aucun chemin (borne 6)",
-      "p50_ms": 6.6,
-      "p95_ms": 9.2,
+      "p50_ms": 7.9,
+      "p95_ms": 12.1,
       "runs": 30,
-      "db_hits": 1786,
+      "db_hits": 1952,
       "rows": 0,
       "server_ms": 3,
       "leaves": [
@@ -189,12 +189,12 @@
     {
       "method": "pipeline",
       "case": "plus gros vendeur",
-      "p50_ms": 7.6,
-      "p95_ms": 18.4,
+      "p50_ms": 6.6,
+      "p95_ms": 13.0,
       "runs": 30,
-      "db_hits": 3627,
+      "db_hits": 3630,
       "rows": 7,
-      "server_ms": 39,
+      "server_ms": 28,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -202,12 +202,12 @@
     {
       "method": "pipeline",
       "case": "plus gros vendeur, since 2024-01-01",
-      "p50_ms": 5.4,
-      "p95_ms": 9.1,
+      "p50_ms": 5.8,
+      "p95_ms": 13.3,
       "runs": 30,
-      "db_hits": 922,
+      "db_hits": 923,
       "rows": 6,
-      "server_ms": 38,
+      "server_ms": 39,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -215,12 +215,12 @@
     {
       "method": "pipeline",
       "case": "club au hasard",
-      "p50_ms": 7.0,
-      "p95_ms": 19.6,
+      "p50_ms": 7.2,
+      "p95_ms": 9.1,
       "runs": 30,
-      "db_hits": 2791,
+      "db_hits": 2793,
       "rows": 7,
-      "server_ms": 4,
+      "server_ms": 3,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -229,13 +229,99 @@
       "method": "club resolve",
       "case": "nom de club",
       "p50_ms": 7.4,
-      "p95_ms": 9.4,
+      "p95_ms": 13.1,
       "runs": 30,
       "db_hits": 405,
       "rows": 5,
-      "server_ms": 17,
+      "server_ms": 19,
       "leaves": [
         "ProcedureCall"
+      ]
+    },
+    {
+      "method": "ClubService.exists",
+      "case": "club au hasard",
+      "p50_ms": 3.5,
+      "p95_ms": 6.6,
+      "runs": 30,
+      "db_hits": 2,
+      "rows": 1,
+      "server_ms": 11,
+      "leaves": [
+        "NodeUniqueIndexSeek"
+      ]
+    },
+    {
+      "method": "PlayerService.latest_season",
+      "case": "saison la plus récente",
+      "p50_ms": 3.8,
+      "p95_ms": 4.7,
+      "runs": 30,
+      "db_hits": 2661,
+      "rows": 1,
+      "server_ms": 2,
+      "leaves": [
+        "DirectedRelationshipTypeScan"
+      ]
+    },
+    {
+      "method": "GdsService.predicted_moves (C)",
+      "case": "joueur de championnat",
+      "p50_ms": 4.0,
+      "p95_ms": 7.8,
+      "runs": 30,
+      "db_hits": 37,
+      "rows": 3,
+      "server_ms": 17,
+      "leaves": [
+        "NodeUniqueIndexSeek"
+      ]
+    },
+    {
+      "method": "RumourService.for_player (D)",
+      "case": "joueur avec rumeurs",
+      "p50_ms": 29.8,
+      "p95_ms": 64.0,
+      "runs": 30,
+      "db_hits": 32896,
+      "rows": 7,
+      "server_ms": 86,
+      "leaves": [
+        "NodeUniqueIndexSeek",
+        "NodeIndexSeek",
+        "Unwind",
+        "NodeByLabelScan"
+      ]
+    },
+    {
+      "method": "RumourService.for_player (D)",
+      "case": "rumeurs en attente",
+      "p50_ms": 18.8,
+      "p95_ms": 25.4,
+      "runs": 30,
+      "db_hits": 22714,
+      "rows": 5,
+      "server_ms": 38,
+      "leaves": [
+        "NodeUniqueIndexSeek",
+        "NodeIndexSeek",
+        "Unwind",
+        "NodeByLabelScan"
+      ]
+    },
+    {
+      "method": "RumourService.source_reliability (D)",
+      "case": "8 sources",
+      "p50_ms": 28.2,
+      "p95_ms": 53.6,
+      "runs": 30,
+      "db_hits": 82950,
+      "rows": 9,
+      "server_ms": 22,
+      "leaves": [
+        "NodeIndexSeek",
+        "Unwind",
+        "NodeByLabelScan"
       ]
     }
   ],
@@ -243,14 +329,14 @@
     {
       "phase": "tous les index",
       "query": "search, page 1",
-      "db_hits": 12443,
+      "db_hits": 12506,
       "rows": 21,
-      "server_ms": 8,
+      "server_ms": 10,
       "leaves": [
         "NodeIndexSeek"
       ],
-      "p50_ms": 10.5,
-      "p95_ms": 12.9,
+      "p50_ms": 11.9,
+      "p95_ms": 15.2,
       "runs": 30
     },
     {
@@ -258,25 +344,25 @@
       "query": "count(*) des correspondances",
       "db_hits": 4077,
       "rows": 1,
-      "server_ms": 50,
+      "server_ms": 51,
       "leaves": [
         "NodeIndexSeek"
       ],
-      "p50_ms": 5.3,
-      "p95_ms": 8.6,
+      "p50_ms": 5.7,
+      "p95_ms": 8.7,
       "runs": 30
     },
     {
       "phase": "sans (position, date_of_birth)",
       "query": "search, page 1",
-      "db_hits": 1103,
+      "db_hits": 1166,
       "rows": 21,
-      "server_ms": 16,
+      "server_ms": 9,
       "leaves": [
         "NodeIndexScan"
       ],
-      "p50_ms": 7.1,
-      "p95_ms": 16.2,
+      "p50_ms": 6.9,
+      "p95_ms": 11.3,
       "runs": 30
     },
     {
@@ -284,25 +370,25 @@
       "query": "count(*) des correspondances",
       "db_hits": 132830,
       "rows": 1,
-      "server_ms": 153,
+      "server_ms": 77,
       "leaves": [
         "NodeByLabelScan"
       ],
-      "p50_ms": 30.1,
-      "p95_ms": 69.3,
+      "p50_ms": 30.0,
+      "p95_ms": 59.5,
       "runs": 30
     },
     {
       "phase": "sans aucun des deux",
       "query": "search, page 1",
-      "db_hits": 141196,
+      "db_hits": 141259,
       "rows": 21,
       "server_ms": 37,
       "leaves": [
         "NodeByLabelScan"
       ],
-      "p50_ms": 34.6,
-      "p95_ms": 53.2,
+      "p50_ms": 31.3,
+      "p95_ms": 58.5,
       "runs": 30
     },
     {
@@ -310,25 +396,25 @@
       "query": "count(*) des correspondances",
       "db_hits": 132830,
       "rows": 1,
-      "server_ms": 51,
+      "server_ms": 67,
       "leaves": [
         "NodeByLabelScan"
       ],
-      "p50_ms": 26.9,
-      "p95_ms": 53.8,
+      "p50_ms": 24.6,
+      "p95_ms": 34.8,
       "runs": 30
     },
     {
       "phase": "index recréés",
       "query": "search, page 1",
-      "db_hits": 12443,
+      "db_hits": 12506,
       "rows": 21,
-      "server_ms": 13,
+      "server_ms": 17,
       "leaves": [
         "NodeIndexSeek"
       ],
-      "p50_ms": 9.5,
-      "p95_ms": 18.3,
+      "p50_ms": 12.0,
+      "p95_ms": 20.3,
       "runs": 30
     },
     {
@@ -336,12 +422,12 @@
       "query": "count(*) des correspondances",
       "db_hits": 4077,
       "rows": 1,
-      "server_ms": 65,
+      "server_ms": 30,
       "leaves": [
         "NodeIndexSeek"
       ],
-      "p50_ms": 5.3,
-      "p95_ms": 12.9,
+      "p50_ms": 4.9,
+      "p95_ms": 7.9,
       "runs": 30
     }
   ],
@@ -349,14 +435,14 @@
     {
       "phase": "avec index",
       "query": "pipeline du plus gros vendeur depuis 2024-01-01",
-      "db_hits": 922,
+      "db_hits": 923,
       "rows": 6,
-      "server_ms": 10,
+      "server_ms": 7,
       "leaves": [
         "NodeUniqueIndexSeek"
       ],
-      "p50_ms": 4.6,
-      "p95_ms": 10.8,
+      "p50_ms": 5.2,
+      "p95_ms": 9.7,
       "runs": 30
     },
     {
@@ -364,25 +450,25 @@
       "query": "count(*) des transferts depuis 2025-01-01",
       "db_hits": 3910,
       "rows": 1,
-      "server_ms": 33,
+      "server_ms": 37,
       "leaves": [
         "NodeIndexSeekByRange"
       ],
-      "p50_ms": 4.8,
-      "p95_ms": 9.0,
+      "p50_ms": 3.9,
+      "p95_ms": 6.5,
       "runs": 30
     },
     {
       "phase": "sans Transfer(date)",
       "query": "pipeline du plus gros vendeur depuis 2024-01-01",
-      "db_hits": 922,
+      "db_hits": 923,
       "rows": 6,
-      "server_ms": 7,
+      "server_ms": 8,
       "leaves": [
         "NodeUniqueIndexSeek"
       ],
-      "p50_ms": 4.0,
-      "p95_ms": 8.7,
+      "p50_ms": 5.7,
+      "p95_ms": 8.9,
       "runs": 30
     },
     {
@@ -390,25 +476,25 @@
       "query": "count(*) des transferts depuis 2025-01-01",
       "db_hits": 160001,
       "rows": 1,
-      "server_ms": 34,
+      "server_ms": 30,
       "leaves": [
         "NodeByLabelScan"
       ],
-      "p50_ms": 16.6,
-      "p95_ms": 32.1,
+      "p50_ms": 19.4,
+      "p95_ms": 58.7,
       "runs": 30
     },
     {
       "phase": "index recréés",
       "query": "pipeline du plus gros vendeur depuis 2024-01-01",
-      "db_hits": 922,
+      "db_hits": 923,
       "rows": 6,
-      "server_ms": 11,
+      "server_ms": 7,
       "leaves": [
         "NodeUniqueIndexSeek"
       ],
-      "p50_ms": 5.0,
-      "p95_ms": 13.5,
+      "p50_ms": 5.2,
+      "p95_ms": 13.3,
       "runs": 30
     },
     {
@@ -416,12 +502,12 @@
       "query": "count(*) des transferts depuis 2025-01-01",
       "db_hits": 3910,
       "rows": 1,
-      "server_ms": 44,
+      "server_ms": 17,
       "leaves": [
         "NodeIndexSeekByRange"
       ],
-      "p50_ms": 4.7,
-      "p95_ms": 7.3,
+      "p50_ms": 3.9,
+      "p95_ms": 6.6,
       "runs": 30
     }
   ],
@@ -431,25 +517,25 @@
       "variant": "SKIP",
       "db_hits": 43,
       "rows": 20,
-      "server_ms": 66,
+      "server_ms": 42,
       "leaves": [
         "NodeIndexScan"
       ],
       "p50_ms": 4.9,
-      "p95_ms": 8.1,
+      "p95_ms": 9.7,
       "runs": 30
     },
     {
       "page": 1,
       "variant": "curseur (search)",
-      "db_hits": 543,
+      "db_hits": 609,
       "rows": 21,
-      "server_ms": 9,
+      "server_ms": 6,
       "leaves": [
         "NodeIndexScan"
       ],
       "p50_ms": 6.3,
-      "p95_ms": 11.5,
+      "p95_ms": 12.5,
       "runs": 30
     },
     {
@@ -457,13 +543,13 @@
       "variant": "curseur coalesce (v1)",
       "db_hits": 200002,
       "rows": 21,
-      "server_ms": 269,
+      "server_ms": 168,
       "leaves": [
         "NodeByLabelScan",
         "NodeUniqueIndexSeekByRange"
       ],
-      "p50_ms": 43.2,
-      "p95_ms": 75.3,
+      "p50_ms": 46.3,
+      "p95_ms": 93.5,
       "runs": 30
     },
     {
@@ -471,25 +557,25 @@
       "variant": "SKIP",
       "db_hits": 403,
       "rows": 20,
-      "server_ms": 0,
+      "server_ms": 1,
       "leaves": [
         "NodeIndexScan"
       ],
-      "p50_ms": 4.3,
-      "p95_ms": 9.6,
+      "p50_ms": 3.9,
+      "p95_ms": 7.2,
       "runs": 30
     },
     {
       "page": 10,
       "variant": "curseur (search)",
-      "db_hits": 544,
+      "db_hits": 607,
       "rows": 21,
-      "server_ms": 9,
+      "server_ms": 7,
       "leaves": [
         "NodeIndexSeekByRange"
       ],
-      "p50_ms": 5.6,
-      "p95_ms": 12.4,
+      "p50_ms": 6.1,
+      "p95_ms": 10.5,
       "runs": 30
     },
     {
@@ -497,13 +583,13 @@
       "variant": "curseur coalesce (v1)",
       "db_hits": 166473,
       "rows": 21,
-      "server_ms": 44,
+      "server_ms": 49,
       "leaves": [
         "NodeByLabelScan",
         "NodeUniqueIndexSeekByRange"
       ],
-      "p50_ms": 39.1,
-      "p95_ms": 80.4,
+      "p50_ms": 43.9,
+      "p95_ms": 86.7,
       "runs": 30
     },
     {
@@ -511,25 +597,25 @@
       "variant": "SKIP",
       "db_hits": 4009,
       "rows": 20,
-      "server_ms": 4,
+      "server_ms": 3,
       "leaves": [
         "NodeIndexScan"
       ],
-      "p50_ms": 8.5,
-      "p95_ms": 14.4,
+      "p50_ms": 10.0,
+      "p95_ms": 20.6,
       "runs": 30
     },
     {
       "page": 100,
       "variant": "curseur (search)",
-      "db_hits": 529,
+      "db_hits": 594,
       "rows": 21,
-      "server_ms": 0,
+      "server_ms": 2,
       "leaves": [
         "NodeIndexSeekByRange"
       ],
-      "p50_ms": 6.2,
-      "p95_ms": 10.3,
+      "p50_ms": 6.6,
+      "p95_ms": 9.4,
       "runs": 30
     },
     {
@@ -537,13 +623,13 @@
       "variant": "curseur coalesce (v1)",
       "db_hits": 199390,
       "rows": 21,
-      "server_ms": 46,
+      "server_ms": 59,
       "leaves": [
         "NodeByLabelScan",
         "NodeUniqueIndexSeekByRange"
       ],
-      "p50_ms": 42.6,
-      "p95_ms": 94.0,
+      "p50_ms": 47.0,
+      "p95_ms": 108.9,
       "runs": 30
     },
     {
@@ -551,25 +637,25 @@
       "variant": "SKIP",
       "db_hits": 20085,
       "rows": 20,
-      "server_ms": 10,
+      "server_ms": 12,
       "leaves": [
         "NodeIndexScan"
       ],
-      "p50_ms": 13.3,
-      "p95_ms": 16.1,
+      "p50_ms": 11.2,
+      "p95_ms": 16.6,
       "runs": 30
     },
     {
       "page": 500,
       "variant": "curseur (search)",
-      "db_hits": 782,
+      "db_hits": 842,
       "rows": 21,
-      "server_ms": 2,
+      "server_ms": 1,
       "leaves": [
         "NodeIndexSeekByRange"
       ],
-      "p50_ms": 6.0,
-      "p95_ms": 9.0,
+      "p50_ms": 5.6,
+      "p95_ms": 8.3,
       "runs": 30
     },
     {
@@ -577,13 +663,13 @@
       "variant": "curseur coalesce (v1)",
       "db_hits": 168984,
       "rows": 21,
-      "server_ms": 64,
+      "server_ms": 38,
       "leaves": [
         "NodeByLabelScan",
         "NodeUniqueIndexSeekByRange"
       ],
-      "p50_ms": 40.2,
-      "p95_ms": 84.3,
+      "p50_ms": 41.8,
+      "p95_ms": 88.1,
       "runs": 30
     },
     {
@@ -591,25 +677,25 @@
       "variant": "SKIP",
       "db_hits": 82657,
       "rows": 20,
-      "server_ms": 28,
+      "server_ms": 36,
       "leaves": [
         "NodeIndexScan"
       ],
-      "p50_ms": 27.1,
-      "p95_ms": 32.1,
+      "p50_ms": 25.4,
+      "p95_ms": 37.0,
       "runs": 30
     },
     {
       "page": 2000,
       "variant": "curseur (search)",
-      "db_hits": 3752,
+      "db_hits": 3774,
       "rows": 21,
-      "server_ms": 5,
+      "server_ms": 2,
       "leaves": [
         "NodeIndexSeekByRange"
       ],
-      "p50_ms": 9.4,
-      "p95_ms": 11.3,
+      "p50_ms": 7.5,
+      "p95_ms": 11.2,
       "runs": 30
     },
     {
@@ -617,13 +703,13 @@
       "variant": "curseur coalesce (v1)",
       "db_hits": 182254,
       "rows": 21,
-      "server_ms": 43,
+      "server_ms": 66,
       "leaves": [
         "NodeByLabelScan",
         "NodeUniqueIndexSeekByRange"
       ],
-      "p50_ms": 97.3,
-      "p95_ms": 164.4,
+      "p50_ms": 42.1,
+      "p95_ms": 79.3,
       "runs": 30
     }
   ],
@@ -633,9 +719,9 @@
       "distance": 2,
       "variant": "borne *..6",
       "found": true,
-      "db_hits": 32,
+      "db_hits": 38,
       "rows": 1,
-      "server_ms": 3,
+      "server_ms": 1,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -645,57 +731,57 @@
       "distance": 2,
       "variant": "non borné *",
       "found": true,
-      "db_hits": 24,
+      "db_hits": 30,
+      "rows": 1,
+      "server_ms": 1,
+      "leaves": [
+        "NodeUniqueIndexSeek"
+      ]
+    },
+    {
+      "case": "4 sauts",
+      "distance": 4,
+      "variant": "borne *..6",
+      "found": true,
+      "db_hits": 206,
+      "rows": 1,
+      "server_ms": 0,
+      "leaves": [
+        "NodeUniqueIndexSeek"
+      ]
+    },
+    {
+      "case": "4 sauts",
+      "distance": 4,
+      "variant": "non borné *",
+      "found": true,
+      "db_hits": 192,
+      "rows": 1,
+      "server_ms": 1,
+      "leaves": [
+        "NodeUniqueIndexSeek"
+      ]
+    },
+    {
+      "case": "6 sauts",
+      "distance": 6,
+      "variant": "borne *..6",
+      "found": true,
+      "db_hits": 2002,
+      "rows": 1,
+      "server_ms": 2,
+      "leaves": [
+        "NodeUniqueIndexSeek"
+      ]
+    },
+    {
+      "case": "6 sauts",
+      "distance": 6,
+      "variant": "non borné *",
+      "found": true,
+      "db_hits": 1982,
       "rows": 1,
       "server_ms": 3,
-      "leaves": [
-        "NodeUniqueIndexSeek"
-      ]
-    },
-    {
-      "case": "4 sauts",
-      "distance": 4,
-      "variant": "borne *..6",
-      "found": true,
-      "db_hits": 172,
-      "rows": 1,
-      "server_ms": 4,
-      "leaves": [
-        "NodeUniqueIndexSeek"
-      ]
-    },
-    {
-      "case": "4 sauts",
-      "distance": 4,
-      "variant": "non borné *",
-      "found": true,
-      "db_hits": 158,
-      "rows": 1,
-      "server_ms": 4,
-      "leaves": [
-        "NodeUniqueIndexSeek"
-      ]
-    },
-    {
-      "case": "6 sauts",
-      "distance": 6,
-      "variant": "borne *..6",
-      "found": true,
-      "db_hits": 1698,
-      "rows": 1,
-      "server_ms": 5,
-      "leaves": [
-        "NodeUniqueIndexSeek"
-      ]
-    },
-    {
-      "case": "6 sauts",
-      "distance": 6,
-      "variant": "non borné *",
-      "found": true,
-      "db_hits": 1678,
-      "rows": 1,
-      "server_ms": 5,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -705,9 +791,9 @@
       "distance": 12,
       "variant": "borne *..6",
       "found": false,
-      "db_hits": 2465,
+      "db_hits": 2484,
       "rows": 0,
-      "server_ms": 3,
+      "server_ms": 2,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -717,7 +803,7 @@
       "distance": 12,
       "variant": "non borné *",
       "found": true,
-      "db_hits": 8465,
+      "db_hits": 8515,
       "rows": 1,
       "server_ms": 5,
       "leaves": [
@@ -729,9 +815,9 @@
       "distance": 30,
       "variant": "borne *..6",
       "found": false,
-      "db_hits": 2108,
+      "db_hits": 2124,
       "rows": 0,
-      "server_ms": 4,
+      "server_ms": 1,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -741,9 +827,9 @@
       "distance": 30,
       "variant": "non borné *",
       "found": true,
-      "db_hits": 24376,
+      "db_hits": 24501,
       "rows": 1,
-      "server_ms": 9,
+      "server_ms": 10,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -753,9 +839,9 @@
       "distance": null,
       "variant": "borne *..6",
       "found": false,
-      "db_hits": 1786,
+      "db_hits": 1952,
       "rows": 0,
-      "server_ms": 5,
+      "server_ms": 2,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -765,9 +851,9 @@
       "distance": null,
       "variant": "non borné *",
       "found": false,
-      "db_hits": 284607,
+      "db_hits": 286509,
       "rows": 0,
-      "server_ms": 84,
+      "server_ms": 47,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -779,7 +865,7 @@
       "paths": 0,
       "db_hits": 69,
       "rows": 1,
-      "server_ms": 210,
+      "server_ms": 101,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -789,7 +875,7 @@
       "paths": 0,
       "db_hits": 557,
       "rows": 1,
-      "server_ms": 68,
+      "server_ms": 84,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -799,7 +885,7 @@
       "paths": 1,
       "db_hits": 4847,
       "rows": 1,
-      "server_ms": 77,
+      "server_ms": 73,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -809,7 +895,7 @@
       "paths": 4,
       "db_hits": 42932,
       "rows": 1,
-      "server_ms": 118,
+      "server_ms": 82,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -819,17 +905,7 @@
       "paths": 12,
       "db_hits": 382115,
       "rows": 1,
-      "server_ms": 203,
-      "leaves": [
-        "NodeUniqueIndexSeek"
-      ]
-    },
-    {
-      "max_hops": 7,
-      "paths": 124,
-      "db_hits": 3413501,
-      "rows": 1,
-      "server_ms": 1657,
+      "server_ms": 309,
       "leaves": [
         "NodeUniqueIndexSeek"
       ]
@@ -837,14 +913,14 @@
   ],
   "gds": {
     "refresh_s": {
-      "1er recalcul": 5.81,
-      "2e recalcul": 2.504
+      "1er recalcul": 6.546,
+      "2e recalcul": 2.438
     },
     "steps": [
       {
         "refresh": "1er recalcul",
         "step": "projection clubs",
-        "seconds": 1.61
+        "seconds": 2.5
       },
       {
         "refresh": "1er recalcul",
@@ -854,42 +930,42 @@
       {
         "refresh": "1er recalcul",
         "step": "Louvain",
-        "seconds": 1.48
+        "seconds": 1.47
       },
       {
         "refresh": "1er recalcul",
         "step": "projection coéquipiers",
-        "seconds": 0.65
+        "seconds": 0.45
       },
       {
         "refresh": "1er recalcul",
         "step": "FastRP",
-        "seconds": 1.41
+        "seconds": 1.51
       },
       {
         "refresh": "1er recalcul",
         "step": "suppression d'une projection",
-        "seconds": 0.09
+        "seconds": 0.05
       },
       {
         "refresh": "1er recalcul",
         "step": "suppression d'une projection",
-        "seconds": 0.02
+        "seconds": 0.01
       },
       {
         "refresh": "2e recalcul",
         "step": "projection clubs",
-        "seconds": 0.11
+        "seconds": 0.07
       },
       {
         "refresh": "2e recalcul",
         "step": "PageRank",
-        "seconds": 0.14
+        "seconds": 0.09
       },
       {
         "refresh": "2e recalcul",
         "step": "Louvain",
-        "seconds": 1.29
+        "seconds": 1.66
       },
       {
         "refresh": "2e recalcul",
@@ -899,52 +975,52 @@
       {
         "refresh": "2e recalcul",
         "step": "FastRP",
-        "seconds": 0.75
+        "seconds": 0.41
       },
       {
         "refresh": "2e recalcul",
         "step": "suppression d'une projection",
-        "seconds": 0.02
+        "seconds": 0.01
       },
       {
         "refresh": "2e recalcul",
         "step": "suppression d'une projection",
-        "seconds": 0.02
+        "seconds": 0.01
       }
     ],
     "reads": [
       {
         "method": "hubs",
-        "p50_ms": 8.3,
-        "p95_ms": 13.7,
+        "p50_ms": 6.3,
+        "p95_ms": 9.7,
         "runs": 30,
         "db_hits": 1221,
         "rows": 20,
-        "server_ms": 15,
+        "server_ms": 12,
         "leaves": [
           "NodeByLabelScan"
         ]
       },
       {
         "method": "communities",
-        "p50_ms": 9.5,
-        "p95_ms": 15.6,
+        "p50_ms": 7.8,
+        "p95_ms": 12.6,
         "runs": 30,
         "db_hits": 2001,
         "rows": 8,
-        "server_ms": 40,
+        "server_ms": 18,
         "leaves": [
           "NodeByLabelScan"
         ]
       },
       {
         "method": "similar_players",
-        "p50_ms": 176.4,
-        "p95_ms": 276.9,
+        "p50_ms": 295.0,
+        "p95_ms": 549.2,
         "runs": 30,
         "db_hits": 200004,
         "rows": 10,
-        "server_ms": 482,
+        "server_ms": 370,
         "leaves": [
           "NodeUniqueIndexSeek",
           "NodeByLabelScan"
@@ -952,13 +1028,13 @@
       },
       {
         "method": "similar_players par index vectoriel",
-        "recall_at_10": 0.95,
-        "p50_ms": 8.5,
-        "p95_ms": 11.7,
+        "recall_at_10": 0.96,
+        "p50_ms": 12.3,
+        "p95_ms": 17.0,
         "runs": 30,
         "db_hits": 51,
         "rows": 10,
-        "server_ms": 29,
+        "server_ms": 35,
         "leaves": [
           "NodeUniqueIndexSeek"
         ]

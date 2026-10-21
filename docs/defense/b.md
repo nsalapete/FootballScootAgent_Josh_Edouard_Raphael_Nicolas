@@ -13,13 +13,14 @@ Objectif : pouvoir défendre chaque ligne du code de B sans l'avoir écrit. Les 
 | B4 | Stack Docker : proxy nginx seul exposé, API derrière, Neo4j sain ; Makefile compatible Windows | `docker-compose.yml`, `nginx/nginx.conf`, `Dockerfile`, `.dockerignore`, `Makefile`, `tests/test_b_containers.py` |
 | B5 | Image de l'API publiée sur GHCR à chaque push sur `main` (et à chaque tag `v*`) | `.github/workflows/publish.yml`, `docs/architecture.md` |
 | B6 | Architecture : services, ports, flux, diagramme draw.io et Mermaid, exemples `curl` de chaque endpoint | `docs/architecture.md`, `docs/architecture.drawio` |
+| B7 | Graphe synthétique de 50 000 joueurs, benchmarks p50/p95, `PROFILE` avant/après index, `SKIP` contre curseur, chemins bornés ; réécriture de `search` pour paginer dans l'ordre de l'index | `scripts/bench_data.py`, `scripts/benchmark.py`, `docs/perf.md`, `docs/perf_results.json`, `app/services/players.py` |
 
 ## 2. Les requêtes et leur coût
 
 | Méthode | Point d'entrée dans le graphe | Index utilisé | Coût |
 | --- | --- | --- | --- |
-| `search` (poste + âge) | `NodeIndexSeek` | composite `Player(position, date_of_birth)` | proportionnel au nombre de joueurs du poste dans la tranche d'âge, puis `Top` (tri partiel des `limit + 1` meilleurs) |
-| `search` (sans poste ni âge) | `NodeByLabelScan` + `Filter` | `Player(market_value_eur)` si `max_value_eur` | lit tous les `Player` : inévitable sans filtre sélectif |
+| `search` (poste + âge) | `NodeIndexSeek` | composite `Player(position, date_of_birth)` | proportionnel au nombre de joueurs du poste dans la tranche d'âge, puis tri des `limit + 1` meilleurs (12 443 db hits, 17,5 ms p50 sur 50 000 joueurs) |
+| `search` (sans poste ni âge) | `NodeIndexScan` / `NodeIndexSeekByRange` dans l'ordre | `Player(market_value_eur)` | lit l'index dans l'ordre et s'arrête après la page : ~540 db hits, quelle que soit la profondeur |
 | `get`, `value_trend` | `NodeUniqueIndexSeek` sur `player_id` | contrainte d'unicité | constant, plus une expansion `HAS_VALUATION` |
 | `resolve` | procédure full-text (Lucene) | `player_name_ft` / `club_name_ft` | index inversé, indépendant du nombre de nœuds |
 | `teammate_path` | 2 `NodeUniqueIndexSeek` puis BFS bidirectionnel | contrainte d'unicité | ≈ d^(h/2) nœuds visités par côté (d = coéquipiers moyens, h = sauts) |
@@ -73,7 +74,16 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
   O(p × k) : plus on avance, plus c'est lent. Et si un joueur est inséré entre deux appels, tout se décale : doublon ou
   joueur sauté.
 - Curseur (keyset) : on mémorise la clé de tri de la dernière ligne (`valeur`, `player_id`) et on demande « strictement
-  après » : `valeur < v OR (valeur = v AND player_id > id)`. Chaque page coûte pareil, et une insertion ne décale rien.
+  après » : `valeur <= v AND (valeur < v OR player_id > id)`. Le `<= v` est une **plage** que l'index
+  `market_value_eur` sait servir dans l'ordre : Neo4j démarre à la bonne valeur et s'arrête après la page. Chaque page
+  coûte pareil, et une insertion ne décale rien.
+- **Ce que le benchmark a corrigé** : la première version triait sur `coalesce(market_value_eur, -1)` pour placer les
+  joueurs sans valeur à la fin. Une expression calculée n'est servie par aucun index : chaque page, curseur ou non,
+  lisait les 50 000 joueurs (~180 000 db hits, 40 à 97 ms). Maintenant les joueurs valorisés sont lus dans l'ordre de
+  l'index, et les joueurs sans valeur viennent d'une seconde requête lancée seulement quand les premiers sont épuisés.
+  Mesure : page 2 000, `SKIP` 82 657 db hits (27 ms), curseur 3 752 (9 ms), ancien curseur 182 254 (97 ms).
+- Limite connue : à valeur égale, l'index ne trie pas par `player_id` ; un gros groupe d'égalité (beaucoup de joueurs
+  à 50 000 €) doit être lu en entier. Un index composite `(market_value_eur, player_id)` réglerait ce cas.
 - `player_id` en second critère rend l'ordre **total** (deux joueurs à la même valeur restent ordonnés) : sans lui, le
   curseur pourrait sauter ou répéter des joueurs à égalité.
 - On lit `limit + 1` lignes : la ligne en trop dit s'il existe une page suivante, sans requête de comptage et sans
@@ -128,6 +138,7 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
 | Choix | Alternative rejetée | Raison |
 | --- | --- | --- |
 | Fragments `WHERE` constants | `$x IS NULL OR ...` | `NodeByLabelScan` au lieu de `NodeIndexSeek` |
+| Tri sur `market_value_eur` (index) + seconde requête pour les joueurs sans valeur | clé `coalesce(market_value_eur, -1)` (première version) | expression non indexable : ~180 000 db hits à chaque page, mesuré en B7 |
 | Compétition = celle du club à la saison la plus récente **du graphe** | dernière saison **du club** | un club relégué hors des championnats suivis resterait affiché dans son ancien championnat |
 | Joueurs sans valeur triés en dernier | les exclure | la recherche ne doit pas cacher de joueurs |
 | Requête Lucene reconstruite mot par mot avec `~1` | passer le texte brut | un `"` ou un `:` tapé par l'utilisateur ou le LLM ferait planter Lucene ; `~1` absorbe un accent manquant (« Mbappe ») |
@@ -150,8 +161,19 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
   pagination reste exacte (testé en parcourant toutes les pages du mini-graphe sans doublon ni trou).
 - **« Pourquoi `shortestPath` et pas `allShortestPaths` ? »** On veut une chaîne à montrer, pas toutes ; `allShortestPaths`
   coûte plus et renvoie un nombre de chemins non borné.
-- **« Comment savez-vous que l'index est utilisé ? »** `EXPLAIN` (voir `docs/perf.md`) : `NodeIndexSeek` sur
-  `player_position_dob`.
+- **« Comment savez-vous que l'index est utilisé ? »** `PROFILE` (voir `docs/perf.md`, section 2) : `NodeIndexSeek` sur
+  `player_position_dob`, 4 077 db hits pour compter les défenseurs de 23 ans ou moins ; sans l'index,
+  `NodeByLabelScan` et 132 830 db hits (×33), 30 ms au lieu de 5.
+- **« Pourquoi l'index `Transfer(date)` n'apparaît pas dans le plan de la filière ? »** Parce que la requête part du
+  club (contrainte d'unicité) : ses 234 transferts sortants sont plus sélectifs que n'importe quelle plage de dates.
+  L'index sert quand il n'y a pas de club pour ancrer la requête (« tous les transferts depuis… ») : 3 910 db hits
+  au lieu de 160 001.
+- **« Le planificateur fait-il toujours le bon choix ? »** Pas toujours en db hits : pour une page de défenseurs, il
+  choisit l'index composite (12 443 db hits) alors que l'index de valeur dans l'ordre en ferait 1 103 ; la latence est
+  la même à 3,5 ms près. On ne force pas `USING INDEX` : avec un poste rare, c'est le composite qui gagne.
+- **« Vos benchmarks portent sur des données inventées ? »** Oui, un graphe synthétique conforme au schéma, à graine
+  fixe, dans une base séparée (port 7689) : il fixe des ordres de grandeur et compare des plans ; les db hits sont
+  déterministes. Les chiffres réels de GDS viennent de C. Le script refuse de vider la base de test ou de l'application.
 - **« Pourquoi un proxy si l'API tourne déjà ? »** Un seul point d'entrée, l'API et Neo4j ne sont pas joignables
   directement, limites de débit et en-têtes sans toucher au code Python, et c'est là qu'on mettrait TLS.
 - **« À quoi sert l'image publiée ? »** Déployer sans reconstruire : `API_IMAGE=ghcr.io/nsalapete/football-scout-api:latest
@@ -165,8 +187,18 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
 
 ## 10. Chiffres de performance
 
-À compléter avec `docs/perf.md` (tâche B7, jeudi) : p50 / p95 par méthode, db hits avant et après index, curseur
-contre `SKIP`, chemin borné contre non borné.
+Détail et protocole dans `docs/perf.md` (50 000 joueurs, 220 000 `PLAYED_WITH`, Neo4j 5.26, 30 mesures par cas).
+
+| À retenir | Chiffre |
+| --- | --- |
+| Méthodes de B | p50 < 35 ms et p95 < 70 ms pour toutes ; aucune ne parcourt un label de nœuds entier |
+| Index composite (position, date_of_birth) | 4 077 db hits contre 132 830 sans (×33), 5 ms contre 30 |
+| Pagination, page 2 000 | `SKIP` 82 657 db hits / 27 ms ; curseur 3 752 / 9 ms |
+| Réécriture de `search` (B7) | ancien curseur ~180 000 db hits à chaque page ; nouveau 50 à 380 fois moins |
+| Chemin sans solution | borné `*..6` : 1 786 db hits ; non borné : 284 607 (×160) |
+| Tous les chemins sans `shortestPath` | ×9 par saut (degré moyen 8,8) : 3,4 millions de db hits à 7 sauts |
+| Recalcul GDS (C) | 5,8 s au premier appel après démarrage, 2,5 s ensuite ; chaque étape < 10 s |
+| `similar_players` (C) | 176 ms p50 en cosinus exhaustif ; 8,5 ms avec un index vectoriel (rappel@10 = 0,95) |
 
 ## 11. Relecture des PR de C (#10, #11, #12)
 
@@ -180,3 +212,13 @@ Points remontés à C, utiles si le jury interroge sur la cohérence entre rôle
   saison de départ ni la qualité des transferts, alors que le graphe part des matchs joués depuis `SCOPE_FROM_SEASON` :
   les deux univers de clubs diffèrent.
 - Le graphe contient aussi des clubs « légers » hors périmètre (acheteurs étrangers) : `hubs` peut les classer.
+
+## 12. Seconde relecture de C (#23, #25, #27, #28, #29)
+
+- Les fenêtres de caractéristiques du modèle n'ont plus la même longueur (6 saisons en entraînement, 8 en test) depuis
+  le filtre `SCOPE_FROM_SEASON` : les degrés grossissent avec la fenêtre.
+- Le nettoyage dépend de `date.today()` : le jeu de données change d'un jour à l'autre.
+- `PREDICTED_MOVE` est un score de **paire de clubs** recopié sur chaque joueur : à signaler dans l'API et à l'agent ;
+  la probabilité n'a pas d'horizon stocké (deux saisons).
+- Les 5,2 s de la projection des clubs mesurées par C contiennent probablement l'échauffement de GDS (×15 entre le
+  premier et le second recalcul sur le graphe de benchmark).

@@ -144,3 +144,56 @@ replaces its own edges without touching anything else.
   every transfer keeps both ends; they have no `PLAYS_IN`.
 - **Natural keys**: Transfermarkt ids for players and clubs, a stable hash for transfers, `<player_id>-<date>` for
   valuations. Ids survive a re-run, so `MERGE` updates instead of duplicating.
+
+## 3. Data sources
+
+### 3.1 Datasets
+
+| Source | What we take | Link | License and terms |
+| --- | --- | --- | --- |
+| transfermarkt-datasets (David Cariboo) | the facts: competitions, clubs, games, appearances, players, transfers, market values | [GitHub](https://github.com/dcaribou/transfermarkt-datasets), [Kaggle](https://www.kaggle.com/datasets/davidcariboo/player-scores), [DuckDB file](https://pub-e682421888d945d684bcae8890b0ec20.r2.dev/data/transfermarkt-datasets.duckdb) | CC0-1.0 (public domain dedication). The data is scraped from [Transfermarkt](https://www.transfermarkt.com); we cite it as the origin and only use it for teaching. |
+| The Guardian, football transfers RSS | press articles for rumours (role D) | [feed](https://www.theguardian.com/football/transfers/rss) | Guardian terms: the graph keeps the URL, title, date and one quoted sentence, never the full text. |
+| BBC Sport, football RSS | same | [feed](https://feeds.bbci.co.uk/sport/football/rss.xml) | BBC terms, same use. |
+| GDELT DOC 2.0 API | article search across outlets | [API](https://api.gdeltproject.org/api/v2/doc/doc) | free and open, with citation of the GDELT Project. |
+
+Version used: the DuckDB file of transfermarkt-datasets at commit `e44f186d` (201 MB, 13 tables), downloaded by
+`make data`. The upstream project has paused its updates: the data is current to **6 July 2026**, which is also the
+date of the last game in the file. Transfers dated after the ingestion day are planned moves (ends of loan up to
+2030) and are dropped (`docs/decisions/a.md`, A3).
+
+Rumour extraction from the press uses an LLM (role D, `docs/guardrails.md`); the confirmation of rumours against the
+Transfermarkt facts is deterministic Cypher (`scripts/confirm_rumours.py`).
+
+### 3.2 Scope kept
+
+| Setting | Value | Why |
+| --- | --- | --- |
+| `SCOPE_COMPETITIONS` | `GB1, ES1, IT1, L1, FR1, PO1, NL1` (England, Spain, Italy, Germany, France, Portugal, Netherlands) | the "big five" plus the two main selling leagues of Europe, so the network shows where clubs buy |
+| `SCOPE_FROM_SEASON` | `2015` | ten full seasons: enough history for link prediction, small enough to load in about a minute |
+| Clubs | 223 that played a league game of the scope, plus 2,009 light clubs on the other side of a transfer | read from `games`, not from the current league of `clubs`, so relegated clubs are kept |
+| Players | 17,856 | appeared for a scope club, made a scope transfer, or still play for a scope club |
+| Games | 26,421 league games, 771,697 appearances, not loaded | aggregated into 359,707 `PLAYED_WITH` pairs |
+| Valuations | from 1 January 2015 on | same time window as the transfers |
+
+Both settings are environment variables (`.env.example`): the same code loads a smaller scope for a quick demo.
+
+### 3.3 Ingestion numbers
+
+Run of 2026-10-20 on the full file, empty local Neo4j 5 (2 GB heap), `make seed`.
+
+| Nodes | Count | Relationships | Count |
+| --- | --- | --- | --- |
+| `Player` | 17,856 | `PLAYED_WITH` | 359,707 |
+| `Club` | 2,232 | `HAS_VALUATION` | 250,988 |
+| `Transfer` | 34,744 (17,833 flagged as loans) | `MADE`, `FROM`, `TO` | 34,744 each |
+| `Valuation` | 250,988 | `SENDS_TO` | 22,713 |
+| `Country` | 166 | `PLAYS_FOR` | 17,850 |
+| `Competition` | 7 | `CITIZEN_OF` | 17,718 |
+| | | `PLAYS_IN` | 1,468 |
+| | | `IN_COUNTRY` | 7 |
+| **Total** | **305,993** | **Total** | **774,683** |
+
+Duration: **1 min 12 s** (DuckDB extraction 3.8 s, facts 39 s, derived relationships 27 s). A second run gives
+exactly the same counts (idempotent). Data quality on the scope: 5,005 transfers outside the seasons, 24 in the
+future, 1,088 with a placeholder club ("Without Club", "Retired"...) and 11 duplicates dropped; 4,270 kept
+transfers have an unknown fee, stored as `null`.

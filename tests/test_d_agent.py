@@ -422,3 +422,21 @@ def test_numbers_of_driver_dates_are_known_to_the_verifier():
 
     known = numbers_in_data([{"date": Date(2022, 7, 15), "day": date(2024, 1, 5), "missing": None}])
     assert {2022.0, 7.0, 15.0, 2024.0, 1.0, 5.0} <= known
+
+
+def test_agent_requires_the_api_key_when_switched_on(api_no_db, monkeypatch):
+    from app.config import get_settings  # pylint: disable=import-outside-toplevel
+
+    question = {"question": "Which bookmaker has the best odds?"}
+    monkeypatch.setenv("AGENT_REQUIRE_API_KEY", "false")
+    assert api_no_db.post("/api/agent/ask", json=question).status_code == 200
+    monkeypatch.setenv("AGENT_REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("API_KEY", "test-d-secret")
+    get_settings.cache_clear()
+    try:
+        assert api_no_db.post("/api/agent/ask", json=question).status_code == 401
+        assert api_no_db.post("/api/agent/ask", json=question, headers={"X-API-Key": "wrong"}).status_code == 401
+        response = api_no_db.post("/api/agent/ask", json=question, headers={"X-API-Key": "test-d-secret"})
+        assert response.status_code == 200 and response.json()["refused"]
+    finally:
+        get_settings.cache_clear()

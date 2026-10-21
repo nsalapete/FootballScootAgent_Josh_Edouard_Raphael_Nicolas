@@ -75,14 +75,15 @@ requête HTTP
 
 1. **Lecture** (recherche, chemin, filière…) : client → nginx (limite 20 req/s par IP) → routeur (validation) →
    service → `Neo4jClient.read` → JSON. Aucun appel externe.
-2. **Question à l'agent** (`POST /api/agent/ask`) : nginx (limite 10 req/min par IP) → `ScoutAgent` (LangGraph :
+2. **Question à l'agent** (`POST /api/agent/ask`, clé d'API si `AGENT_REQUIRE_API_KEY=true`) : nginx (limite
+   10 req/min par IP) → `ScoutAgent` (LangGraph :
    routage, planification, appels d'outils, rédaction, vérification des preuves) → outils = méthodes des services
    (et, en dernier recours, un Cypher généré puis validé par `CypherValidator`, exécuté en lecture) → fournisseur LLM
    en HTTPS. Chaque affirmation est étiquetée `verified`, `predicted` ou `rumour` avec ses preuves `Label:id`.
 3. **Import de rumeurs** (`POST /api/rumours/import`, clé d'API) : flux RSS → extraction par le LLM → nœuds
    `Article` et `Rumour` ; `scripts.confirm_rumours` les confirme ensuite face aux vrais transferts.
-4. **Recalcul GDS** (`POST /api/admin/gds/refresh`, clé d'API) : projections en mémoire, PageRank, Louvain, FastRP,
-   écrits sur les nœuds (`pagerank`, `community_id`, `embedding`) pour que les lectures restent simples.
+4. **Recalcul GDS** (`POST /api/admin/gds/refresh`, clé d'API) : projections en mémoire, PageRank, Louvain, betweenness, FastRP,
+   écrits sur les nœuds (`pagerank`, `community_id`, `betweenness`, `embedding`) pour que les lectures restent simples.
 5. **Ingestion** (`ingest` ou `make seed`) : DuckDB Transfermarkt (lecture seule) → contraintes et index → nœuds
    puis relations par lots (`MERGE`, idempotent) → relations dérivées `PLAYED_WITH` et `SENDS_TO`.
 6. **CI/CD** : à chaque PR, `lint` (pylint ≥ 9,5) et `tests` (pytest contre un Neo4j de service sur 7688,
@@ -95,10 +96,11 @@ requête HTTP
   429 au-delà ; corps limité à 1 Mo ; `server_tokens off` ; en-têtes `X-Content-Type-Options: nosniff`,
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`.
 - Clé d'API (`X-API-Key`, comparée en temps constant) sur les routes qui écrivent dans le graphe ou dépensent du crédit
-  LLM : 401 si elle manque ou est fausse, 503 si `API_KEY` n'est pas configurée côté serveur.
+  LLM : 401 si elle manque ou est fausse, 503 si `API_KEY` n'est pas configurée côté serveur. L'agent l'exige aussi
+  quand le serveur tourne avec `AGENT_REQUIRE_API_KEY=true` (production) ; sans ce réglage (développement, tests,
+  démonstration sur le mini-graphe), il n'est protégé que par la limite de débit de nginx.
 - Cypher toujours paramétré ; secrets uniquement dans `.env` (ni dans l'image, grâce au `.dockerignore`, ni dans Git).
-- Limites connues : pas de TLS (à poser sur nginx en production) ; `/api/agent/ask` n'est protégé que par la limite
-  de débit.
+- Limites connues : pas de TLS (à poser sur nginx en production).
 
 ## Image Docker publiée
 
@@ -190,10 +192,12 @@ curl "$BASE/api/clubs/7/pipeline?since=2022-08-01&limit=10"
 
 ```bash
 curl "$BASE/api/clubs/hubs?limit=10"                 # clubs triés par PageRank pondéré sur SENDS_TO
+curl "$BASE/api/clubs/gateways?limit=10"             # clubs passerelles entre marchés : betweenness sur SENDS_TO
 curl "$BASE/api/network/communities?min_size=2"      # communautés Louvain de clubs (filières)
 curl "$BASE/api/players/8/similar?k=5"               # voisins par embedding FastRP
 curl "$BASE/api/players/9/predicted-moves?limit=5"   # destinations prédites : hypothèses, nature "predicted"
-# Ces routes lisent les scores écrits par le recalcul GDS : listes vides tant qu'il n'a pas tourné.
+# hubs, gateways, communities et similar lisent les scores écrits par le recalcul GDS (listes vides avant le premier) ;
+# predicted-moves lit les prédictions écrites par `python -m ml.train_link_prediction`.
 curl -X POST "$BASE/api/admin/gds/refresh" -H "X-API-Key: $API_KEY"
 # 200 rapport {"projections":[...],"algorithms":[...],"duration_s":...}
 # 401 {"detail":"Clé d'API absente ou invalide (en-tête X-API-Key)"} sans la clé
@@ -207,8 +211,9 @@ curl -X POST "$BASE/api/rumours/import" -H "X-API-Key: $API_KEY" \
      -H "Content-Type: application/json" -d '{"feed_urls": [], "max_articles": 20}'
 # 200 {"articles_seen":...,"articles_new":...,"rumours_created":...,"unresolved_names":...} ; 401 sans la clé
 
-curl -X POST "$BASE/api/agent/ask" -H "Content-Type: application/json" \
+curl -X POST "$BASE/api/agent/ask" -H "Content-Type: application/json" -H "X-API-Key: $API_KEY" \
      -d '{"question": "Quels lateraux gauches de moins de 23 ans valent moins de 10 M EUR ?"}'
+# (la clé n'est exigée que si le serveur tourne avec AGENT_REQUIRE_API_KEY=true : 401 sans elle)
 # 200 {"answer":"...","claims":[{"text":"...","nature":"verified","evidence_ids":["Player:5"]}],
 #      "removed_claims":[],"trace":[{"tool":"search_players", ...}],"refused":false,"needs_clarification":false}
 ```

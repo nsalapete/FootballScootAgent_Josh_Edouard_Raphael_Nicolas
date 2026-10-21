@@ -37,6 +37,7 @@ from app.models.players import PlayerSearch
 from app.services import gds
 from app.services.clubs import ClubService
 from app.services.players import _TEAMMATE_PATHS, PlayerService, encode_cursor
+from app.services.rumours import RumourService
 from scripts.bench_data import DEFAULT_PASSWORD, DEFAULT_URI, check_target
 from scripts.cypher_files import split_statements
 
@@ -107,10 +108,16 @@ ALL_PATHS_TEMPLATE = (
     "MATCH (start:Player {player_id: $from_id}), (goal:Player {player_id: $to_id}) "
     "MATCH path = (start)-[:PLAYED_WITH*..__MAX_HOPS__]-(goal) RETURN count(path) AS paths"
 )
-ALL_PATHS = {hops: ALL_PATHS_TEMPLATE.replace("__MAX_HOPS__", str(hops)) for hops in range(2, 8)}
+ALL_PATHS = {hops: ALL_PATHS_TEMPLATE.replace("__MAX_HOPS__", str(hops)) for hops in range(2, 7)}  # *..6 at most
 
-PLAYERS = "MATCH (p:Player)-[:PLAYS_FOR]->(c:Club) RETURN p.player_id AS id, p.name AS name, c.club_id AS club"
-EDGES = "MATCH (a:Player)-[:PLAYED_WITH]->(b:Player) RETURN a.player_id AS a, b.player_id AS b"
+# Sampling reads: bounded like every list (the synthetic graph has 50,000 players and 220,000 PLAYED_WITH).
+MAX_SAMPLED = 1_000_000
+PLAYERS = (
+    "MATCH (p:Player)-[:PLAYS_FOR]->(c:Club) RETURN p.player_id AS id, p.name AS name, c.club_id AS club LIMIT $limit"
+)
+EDGES = "MATCH (a:Player)-[:PLAYED_WITH]->(b:Player) RETURN a.player_id AS a, b.player_id AS b LIMIT $limit"
+RUMOURED = "MATCH (:Rumour)-[:ABOUT]->(p:Player) RETURN DISTINCT p.player_id AS id ORDER BY id LIMIT 200"
+SOURCES = "MATCH (a:Article) RETURN DISTINCT a.source AS source ORDER BY source LIMIT 50"
 TOP_SELLER = (
     "MATCH (c:Club)<-[:FROM]-(t:Transfer) RETURN c.club_id AS club, count(t) AS transfers "
     "ORDER BY transfers DESC, club LIMIT 1"
@@ -238,6 +245,9 @@ class Samples:
     clubs: list[int]
     top_seller: int
     pairs: dict[str, tuple[int, int, int | None]]  # case -> (from, to, true distance or None)
+    rumoured: list[int] = field(default_factory=list)  # players with at least one rumour
+    league_players: list[int] = field(default_factory=list)  # players with stored PREDICTED_MOVE
+    sources: list[str] = field(default_factory=list)
 
 
 def pick_pairs(graph: nx.Graph, club_of: dict[int, int], rng: random.Random) -> dict[str, tuple[int, int, int | None]]:
@@ -263,10 +273,10 @@ def pick_pairs(graph: nx.Graph, club_of: dict[int, int], rng: random.Random) -> 
 def gather(client: ProfilingClient) -> Samples:
     """Draw player ids, names, clubs and path pairs from the graph (fixed seed)."""
     rng = random.Random(SEED)
-    players = client.read(PLAYERS)
+    players = client.read(PLAYERS, {"limit": MAX_SAMPLED})
     club_of = {row["id"]: row["club"] for row in players}
     graph = nx.Graph()
-    graph.add_edges_from((row["a"], row["b"]) for row in client.read(EDGES))
+    graph.add_edges_from((row["a"], row["b"]) for row in client.read(EDGES, {"limit": MAX_SAMPLED}))
     picked = [players[index] for index in rng.sample(range(len(players)), 200)]
     return Samples(
         player_ids=[row["id"] for row in picked],
@@ -274,6 +284,9 @@ def gather(client: ProfilingClient) -> Samples:
         clubs=sorted({row["club"] for row in picked if row["club"] <= LEAGUE_CLUBS}),
         top_seller=client.read(TOP_SELLER)[0]["club"],
         pairs=pick_pairs(graph, club_of, rng),
+        rumoured=[row["id"] for row in client.read(RUMOURED)],
+        league_players=[row["id"] for row in picked if row["club"] <= LEAGUE_CLUBS],
+        sources=[row["source"] for row in client.read(SOURCES)],
     )
 
 
@@ -283,6 +296,41 @@ def typo(name: str) -> str:
     last = words[-1]
     words[-1] = last[:2] + last[3:] if len(last) > 4 else last
     return " ".join(words)
+
+
+@dataclass
+class Services:
+    """Every service of `app/services`, bound to the benchmark client."""
+
+    players: PlayerService
+    clubs: ClubService
+    network: gds.GdsService
+    rumours: RumourService
+
+
+def other_cases(services: Services, samples: Samples) -> list[tuple[str, str, Callable]]:
+    """(method, case, call) for the read methods of the other roles' services (C and D) and B's helpers.
+
+    Not here: `GdsService.refresh` (timed step by step in `gds_experiment`) and `RumourService.import_articles`
+    (bound by the network and the LLM, not by the graph).
+    """
+    rumours = services.rumours
+    return [
+        ("ClubService.exists", "club au hasard", cycling(services.clubs.exists, samples.clubs)),
+        ("PlayerService.latest_season", "saison la plus récente", services.players.latest_season),
+        (
+            "GdsService.predicted_moves (C)",
+            "joueur de championnat",
+            cycling(services.network.predicted_moves, samples.league_players),
+        ),
+        ("RumourService.for_player (D)", "joueur avec rumeurs", cycling(rumours.for_player, samples.rumoured)),
+        (
+            "RumourService.for_player (D)",
+            "rumeurs en attente",
+            cycling(lambda pid: rumours.for_player(pid, "pending"), samples.rumoured),
+        ),
+        ("RumourService.source_reliability (D)", "8 sources", lambda: rumours.source_reliability(samples.sources)),
+    ]
 
 
 def service_cases(players: PlayerService, clubs: ClubService, samples: Samples) -> list[tuple[str, str, Callable]]:
@@ -324,9 +372,10 @@ def service_cases(players: PlayerService, clubs: ClubService, samples: Samples) 
 
 def bench_services(client: ProfilingClient, samples: Samples, runs: int) -> list[dict[str, Any]]:
     """Latency and PROFILE of every case of `service_cases`."""
-    players, clubs = PlayerService(client), ClubService(client)
+    services = Services(PlayerService(client), ClubService(client), gds.GdsService(client), RumourService(client))
     rows = []
-    for method, case, call in service_cases(players, clubs, samples):
+    cases = service_cases(services.players, services.clubs, samples) + other_cases(services, samples)
+    for method, case, call in cases:
         plan = client.profile_call(call)
         rows.append({"method": method, "case": case, **latency(call, runs), **asdict(plan)})
     return rows
@@ -491,6 +540,7 @@ def gds_experiment(uri: str, password: str, samples: Samples, runs: int) -> dict
             gds.PROJECT_CLUBS: "projection clubs",
             gds.PAGERANK: "PageRank",
             gds.LOUVAIN: "Louvain",
+            gds.BETWEENNESS: "Betweenness",
             gds.PROJECT_TEAMMATES: "projection coéquipiers",
             gds.FASTRP: "FastRP",
             gds.DROP: "suppression d'une projection",
@@ -503,6 +553,7 @@ def gds_experiment(uri: str, password: str, samples: Samples, runs: int) -> dict
         reads = [
             ("hubs", lambda: service.hubs(20)),
             ("communities", lambda: service.communities(2)),
+            ("gateways", lambda: service.gateways(20)),
             ("similar_players", cycling(lambda pid: service.similar_players(pid, 10), samples.player_ids)),
         ]
         latencies = [
@@ -559,7 +610,8 @@ def report(results: dict[str, Any]) -> str:
     plan = ["db_hits", "rows", "server_ms", "leaves"]
     parts = [
         f"Graphe : {results['graph']}",
-        "## Services\n" + table(results["services"], ["method", "case", "p50_ms", "p95_ms", "db_hits", "leaves"]),
+        "## Services\n"
+        + table(results["services"], ["method", "case", "p50_ms", "p95_ms", "db_hits", "rows", "leaves"]),
         "## Index Player(position, date_of_birth) et Player(market_value_eur) : Defender ≤ 23 ans\n"
         + table(results["index_search"], ["phase", "query", "p50_ms", *plan]),
         "## Index Transfer(date)\n" + table(results["index_pipeline"], ["phase", "query", "p50_ms", *plan]),
@@ -573,9 +625,23 @@ def report(results: dict[str, Any]) -> str:
             f"## GDS (refresh {results['gds']['refresh_s']} s)\n"
             + table(results["gds"]["steps"], ["refresh", "step", "seconds"])
         )
-        columns = ["method", "p50_ms", "p95_ms", "db_hits", "leaves", "recall_at_10"]
+        columns = ["method", "p50_ms", "p95_ms", "db_hits", "rows", "leaves", "recall_at_10"]
         parts.append(table(results["gds"]["reads"], columns))
     return "\n\n".join(parts)
+
+
+def measure_graph_queries(client: ProfilingClient, samples: Samples, runs: int) -> dict[str, Any]:
+    """Every measure except GDS: services, index experiments, pagination and paths."""
+    return {
+        "graph": client.read(SIZES)[0],
+        "pairs": {case: list(pair) for case, pair in samples.pairs.items()},
+        "services": bench_services(client, samples, runs),
+        "index_search": search_index_experiment(client, runs),
+        "index_pipeline": pipeline_index_experiment(client, samples.top_seller, runs),
+        "pagination": pagination_experiment(client, runs),
+        "paths": path_experiment(client, samples),
+        "all_paths": all_paths_experiment(client, samples),
+    }
 
 
 def main() -> None:
@@ -587,6 +653,7 @@ def main() -> None:
     parser.add_argument("--skip-gds", action="store_true")
     parser.add_argument("--output", type=Path, default=RESULTS)
     parser.add_argument("--report-only", action="store_true", help="print the tables of an existing --output")
+    parser.add_argument("--only-gds", action="store_true", help="re-measure GDS only, into an existing --output")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")  # the Windows console encoding cannot print every character
     if args.report_only:
@@ -596,16 +663,10 @@ def main() -> None:
     client = ProfilingClient(args.uri, args.password)
     try:
         samples = gather(client)
-        results: dict[str, Any] = {
-            "graph": client.read(SIZES)[0],
-            "pairs": {case: list(pair) for case, pair in samples.pairs.items()},
-            "services": bench_services(client, samples, args.runs),
-            "index_search": search_index_experiment(client, args.runs),
-            "index_pipeline": pipeline_index_experiment(client, samples.top_seller, args.runs),
-            "pagination": pagination_experiment(client, args.runs),
-            "paths": path_experiment(client, samples),
-            "all_paths": all_paths_experiment(client, samples),
-        }
+        if args.only_gds:  # e.g. right after restarting the database, to time a cold refresh again
+            results = json.loads(args.output.read_text(encoding="utf-8"))
+        else:
+            results = measure_graph_queries(client, samples, args.runs)
     finally:
         client.close()
     if not args.skip_gds:

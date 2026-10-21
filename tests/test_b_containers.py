@@ -51,3 +51,11 @@ def test_swagger_is_served_through_the_proxy(client):
 def test_protected_route_needs_the_api_key(client):
     response = client.post("/api/admin/gds/refresh")
     assert response.status_code in (401, 503)  # 503 when API_KEY is not set in .env
+
+
+def test_agent_route_is_rate_limited_by_the_proxy(client):
+    # GET on a POST route: 405 from the API, so no LLM call; the 7th request in a burst exceeds 1 + 5 allowed.
+    # A run less than a minute earlier may have emptied the budget already: then every answer is 429.
+    codes = [client.get("/api/agent/ask").status_code for _ in range(8)]
+    assert set(codes) <= {405, 429}
+    assert codes[-1] == 429

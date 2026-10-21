@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from neo4j.exceptions import ServiceUnavailable
 
 from app.models.common import ErrorResponse, FieldError
-from app.routers import agent, clubs, health, network, players, rumours
+from app.routers import agent, clubs, health, network, players, rumours, ui
 
 # Every router whose endpoints take parameters documents the real body of its 422 responses: an
 # `ErrorResponse` (see `invalid_request` below) instead of FastAPI's default `HTTPValidationError`.
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
     # network before clubs and players: its fixed paths (/clubs/hubs) must win over path parameters.
-    for module in (health, network, players, clubs, rumours, agent):
+    for module in (health, network, players, clubs, rumours, agent, ui):
         application.include_router(module.router, responses=None if module is health else INVALID_REQUEST)
 
     @application.exception_handler(RequestValidationError)

@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Football Scout Agent</title>
+  <meta name="description" content="Analyst console for the European transfer graph: search, network metrics, predictions, rumours and the scouting agent.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='%230B1210'/%3E%3Crect x='2.5' y='4.5' width='19' height='15' rx='1' fill='none' stroke='%23E9D46B' stroke-width='1.6'/%3E%3Cline x1='12' y1='4.5' x2='12' y2='19.5' stroke='%23E9D46B' stroke-width='1.6'/%3E%3Ccircle cx='12' cy='12' r='3' fill='none' stroke='%23E9D46B' stroke-width='1.6'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wordmark">
+      <svg class="wordmark-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="2.5" y="4.5" width="19" height="15" rx="1" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <line x1="12" y1="4.5" x2="12" y2="19.5" stroke="currentColor" stroke-width="1.4"/>
+        <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.4"/>
+      </svg>
+      <span class="wordmark-name">Football Scout</span>
+      <span class="wordmark-sub">Transfer graph · analyst console</span>
+    </div>
+    <div class="topbar-right">
+      <span id="health" class="pill pill-wait" role="status" aria-live="polite"><span class="pill-dot"></span><span class="pill-text">Checking Neo4j</span></span>
+      <form id="key-form" class="key-form" autocomplete="off">
+        <input type="text" name="key-owner" autocomplete="off" value="api" hidden tabindex="-1" aria-hidden="true">
+        <label class="key-field">
+          <span class="caps">API key</span>
+          <input id="api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="for protected routes">
+        </label>
+      </form>
+      <a class="toplink" href="/docs" target="_blank" rel="noopener noreferrer">Swagger</a>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" aria-label="Controls">
+      <nav class="tabs" role="tablist" aria-label="Panels">
+        <button class="tab" role="tab" type="button" id="tabbtn-agent" data-tab="agent" aria-selected="true" aria-controls="tab-agent" tabindex="0">Agent</button>
+        <button class="tab" role="tab" type="button" id="tabbtn-players" data-tab="players" aria-selected="false" aria-controls="tab-players" tabindex="-1">Players</button>
+        <button class="tab" role="tab" type="button" id="tabbtn-clubs" data-tab="clubs" aria-selected="false" aria-controls="tab-clubs" tabindex="-1">Clubs</button>
+        <button class="tab" role="tab" type="button" id="tabbtn-network" data-tab="network" aria-selected="false" aria-controls="tab-network" tabindex="-1">Network</button>
+        <button class="tab" role="tab" type="button" id="tabbtn-admin" data-tab="admin" aria-selected="false" aria-controls="tab-admin" tabindex="-1">Admin</button>
+      </nav>
+
+      <!-- AGENT -->
+      <section class="tabpanel" id="tab-agent" role="tabpanel" aria-labelledby="tabbtn-agent">
+        <form id="agent-form" class="stack" novalidate>
+          <label class="field">
+            <span class="caps">Question to the scouting agent</span>
+            <textarea id="agent-question" rows="3" maxlength="500" placeholder="Ask about values, pipelines, teammate chains, predictions or rumours"></textarea>
+          </label>
+          <div class="row between">
+            <span class="hint" id="agent-count">0 / 500</span>
+            <button type="submit" id="agent-ask" class="btn btn-primary">Ask the agent</button>
+          </div>
+          <details class="prepared" id="agent-prepared" open>
+            <summary class="caps suggestions-title">Prepared questions (7)</summary>
+            <div class="suggestions" id="agent-suggestions" aria-label="Prepared questions"></div>
+          </details>
+          <p class="hint">Answers take 10 to 70 s and call a paid LLM. Every claim is checked against the graph before it is shown.</p>
+        </form>
+        <div id="agent-result" class="result" aria-live="polite"></div>
+      </section>
+
+      <!-- PLAYERS -->
+      <section class="tabpanel" id="tab-players" role="tabpanel" aria-labelledby="tabbtn-players" hidden>
+        <form id="player-resolve-form" class="stack" autocomplete="off" data-resolver>
+          <label class="field">
+            <span class="caps">Find a player by name</span>
+            <input id="player-resolve" type="search" placeholder="e.g. Gabriel" spellcheck="false">
+          </label>
+          <div id="player-resolve-results" class="list"></div>
+        </form>
+        <hr class="rule">
+        <form id="search-form" class="stack" novalidate>
+          <div class="caps section-label">Search the market</div>
+          <div class="grid2">
+            <label class="field"><span class="caps">Position</span>
+              <select id="f-position">
+                <option value="">Any</option>
+                <option>Goalkeeper</option><option>Defender</option><option>Midfield</option><option>Attack</option>
+              </select>
+            </label>
+            <label class="field"><span class="caps">Sub-position</span>
+              <input id="f-sub" list="sub-positions" placeholder="Any" spellcheck="false">
+              <datalist id="sub-positions">
+                <option value="Goalkeeper"></option><option value="Centre-Back"></option><option value="Left-Back"></option>
+                <option value="Right-Back"></option><option value="Defensive Midfield"></option><option value="Central Midfield"></option>
+                <option value="Attacking Midfield"></option><option value="Left Winger"></option><option value="Right Winger"></option>
+                <option value="Second Striker"></option><option value="Centre-Forward"></option>
+              </datalist>
+            </label>
+            <label class="field"><span class="caps">Max age</span>
+              <input id="f-age" type="number" min="15" max="45" step="1" placeholder="Any">
+            </label>
+            <label class="field"><span class="caps">Max value (€M)</span>
+              <input id="f-value" type="number" min="0" step="0.5" placeholder="Any">
+            </label>
+            <label class="field"><span class="caps">Competition</span>
+              <select id="f-comp">
+                <option value="">Any</option>
+                <option value="GB1">GB1 · Premier League</option>
+                <option value="ES1">ES1 · LaLiga</option>
+                <option value="IT1">IT1 · Serie A</option>
+                <option value="L1">L1 · Bundesliga</option>
+                <option value="FR1">FR1 · Ligue 1</option>
+                <option value="PO1">PO1 · Liga Portugal</option>
+                <option value="NL1">NL1 · Eredivisie</option>
+              </select>
+            </label>
+            <label class="field"><span class="caps">Page size</span>
+              <input id="f-limit" type="number" min="1" max="100" step="1" value="20">
+            </label>
+          </div>
+          <div class="row between">
+            <button type="button" id="search-reset" class="btn btn-ghost">Reset</button>
+            <button type="submit" id="search-go" class="btn btn-primary">Search</button>
+          </div>
+        </form>
+        <div id="search-msg"><p class="hint">Set filters and search, or pick a player on the board.</p></div>
+        <div id="search-head" class="list-head" hidden>
+          <span>Player</span><span>Pos</span><span class="num">Age</span><span class="num">Value</span>
+        </div>
+        <div id="search-results" class="list"></div>
+        <div class="row between">
+          <button type="button" id="search-all" class="btn btn-ghost" hidden>Add all to graph</button>
+          <button type="button" id="search-more" class="btn btn-ghost" hidden>Load more</button>
+        </div>
+      </section>
+
+      <!-- CLUBS -->
+      <section class="tabpanel" id="tab-clubs" role="tabpanel" aria-labelledby="tabbtn-clubs" hidden>
+        <form id="club-resolve-form" class="stack" autocomplete="off" data-resolver>
+          <label class="field">
+            <span class="caps">Find a club by name</span>
+            <input id="club-resolve" type="search" placeholder="e.g. Alvorada" spellcheck="false">
+          </label>
+          <div id="club-resolve-results" class="list"></div>
+        </form>
+        <div class="caps section-label">Central clubs · by PageRank</div>
+        <div id="club-known" class="chips"></div>
+        <hr class="rule">
+        <div id="club-detail" class="stack">
+          <p class="empty">Pick a club: it opens on the board with its selling pipeline in the panel on the right.</p>
+        </div>
+      </section>
+
+      <!-- NETWORK -->
+      <section class="tabpanel" id="tab-network" role="tabpanel" aria-labelledby="tabbtn-network" hidden>
+        <div class="stack">
+          <div class="row between">
+            <div class="caps section-label">Hubs · PageRank</div>
+            <button type="button" id="hubs-draw" class="btn btn-ghost btn-sm">Add to graph</button>
+          </div>
+          <p class="hint">Clubs that receive players from other central clubs: where the transfer flow converges.</p>
+          <div id="hubs" class="bars"></div>
+        </div>
+        <hr class="rule">
+        <div class="stack">
+          <div class="row between">
+            <div class="caps section-label">Gateways · betweenness</div>
+            <button type="button" id="gateways-draw" class="btn btn-ghost btn-sm">Add to graph</button>
+          </div>
+          <p class="hint">Clubs sitting on the shortest transfer routes between others: intermediaries between markets.</p>
+          <div id="gateways" class="bars"></div>
+        </div>
+        <hr class="rule">
+        <div class="stack">
+          <div class="row between">
+            <div class="caps section-label">Communities · Louvain</div>
+            <label class="inline-field"><span class="caps">Min size</span>
+              <input id="comm-min" type="number" min="1" max="50" value="2">
+            </label>
+          </div>
+          <p class="hint">Groups of clubs that trade mostly with each other. Click a group to highlight it in the graph.</p>
+          <div id="communities" class="stack"></div>
+        </div>
+      </section>
+
+      <!-- ADMIN -->
+      <section class="tabpanel" id="tab-admin" role="tabpanel" aria-labelledby="tabbtn-admin" hidden>
+        <div class="stack">
+          <div class="caps section-label">Graph Data Science</div>
+          <p class="hint">Rebuilds the projections and recomputes PageRank, betweenness, communities and embeddings. Requires the API key.</p>
+          <div class="row"><button type="button" id="gds-refresh" class="btn btn-primary">Refresh GDS scores</button></div>
+          <div id="gds-report"></div>
+        </div>
+        <hr class="rule">
+        <form id="import-form" class="stack" novalidate>
+          <div class="caps section-label">Import rumours from news feeds</div>
+          <div class="warning" role="note">
+            <strong class="caps">Spends LLM credit.</strong>
+            Each new article is sent to the extraction model. Keep the article count low during a demo.
+          </div>
+          <label class="field"><span class="caps">Feed URLs (one per line, RSS or GDELT JSON)</span>
+            <textarea id="import-feeds" rows="3" spellcheck="false" placeholder="https://example.org/football/rss"></textarea>
+          </label>
+          <div class="row between">
+            <label class="inline-field"><span class="caps">Max articles</span>
+              <input id="import-max" type="number" min="1" max="500" value="10">
+            </label>
+            <button type="submit" id="import-go" class="btn btn-primary">Run import</button>
+          </div>
+        </form>
+        <div id="import-report"></div>
+      </section>
+    </aside>
+
+    <section class="stage" aria-label="Graph">
+      <svg id="pitch" class="pitch" viewBox="-0.5 -0.5 106 69" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <rect x="0" y="0" width="105" height="68"/>
+        <line x1="52.5" y1="0" x2="52.5" y2="68"/>
+        <circle cx="52.5" cy="34" r="9.15"/>
+        <circle cx="52.5" cy="34" r="0.5" class="spot"/>
+        <rect x="0" y="13.84" width="16.5" height="40.32"/>
+        <rect x="88.5" y="13.84" width="16.5" height="40.32"/>
+        <rect x="0" y="24.84" width="5.5" height="18.32"/>
+        <rect x="99.5" y="24.84" width="5.5" height="18.32"/>
+        <path d="M16.5 26.7 A9.15 9.15 0 0 1 16.5 41.3"/>
+        <path d="M88.5 26.7 A9.15 9.15 0 0 0 88.5 41.3"/>
+      </svg>
+      <svg id="graph" class="graph" tabindex="-1" aria-label="Transfer graph: Tab reaches the board, arrow keys move between nodes, Enter opens one"></svg>
+
+      <div class="graph-controls" role="toolbar" aria-label="Graph controls">
+        <span id="graph-count" class="mono hint"></span>
+        <button type="button" class="btn btn-ghost btn-sm" id="g-legend" aria-pressed="false" aria-controls="legend" title="Expand the full legend">Legend</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="g-fit">Fit</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="g-relayout">Relayout</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="g-clear">Clear</button>
+      </div>
+
+      <div class="legend" id="legend" aria-label="Legend">
+        <div class="legend-col">
+          <div class="caps legend-title">Nodes</div>
+          <div class="legend-item"><svg width="14" height="14"><circle cx="7" cy="7" r="5" class="pos-Goalkeeper"/></svg>Goalkeeper</div>
+          <div class="legend-item"><svg width="14" height="14"><circle cx="7" cy="7" r="5" class="pos-Defender"/></svg>Defender</div>
+          <div class="legend-item"><svg width="14" height="14"><circle cx="7" cy="7" r="5" class="pos-Midfield"/></svg>Midfield</div>
+          <div class="legend-item"><svg width="14" height="14"><circle cx="7" cy="7" r="5" class="pos-Attack"/></svg>Attack</div>
+          <div class="legend-item"><svg width="14" height="14"><rect x="1.5" y="1.5" width="11" height="11" rx="2" class="club-shape"/></svg>Club</div>
+          <div class="legend-item legend-full"><svg width="14" height="14"><path d="M7 1.5L12.5 7L7 12.5L1.5 7Z" class="comp-shape"/></svg>Competition</div>
+        </div>
+        <div class="legend-col legend-full">
+          <div class="caps legend-title">Links</div>
+          <div class="legend-item"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="l-PLAYS_FOR"/></svg>Plays for</div>
+          <div class="legend-item"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="l-PLAYED_WITH" stroke-width="2"/></svg>Played with</div>
+          <div class="legend-item"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="l-SELLS_TO_LEAGUE"/></svg>Sells to league</div>
+          <div class="legend-item"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="l-SIMILAR"/></svg>Similar circle (model)</div>
+          <div class="legend-item"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="l-PREDICTED"/></svg>Predicted move</div>
+          <div class="legend-item"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="l-RUMOUR"/></svg>Rumour</div>
+          <div class="legend-item"><svg width="26" height="10"><line x1="1" y1="5" x2="25" y2="5" class="lg-path"/></svg>Teammate path</div>
+          <div class="legend-item"><svg width="26" height="14"><rect x="7" y="1" width="12" height="12" rx="2" class="lg-selected"/></svg>Selected</div>
+        </div>
+        <div class="legend-col legend-truth">
+          <div class="caps legend-title">Truth level</div>
+          <div class="legend-item"><span class="badge b-verified">Verified</span></div>
+          <div class="legend-item"><span class="badge b-predicted">Predicted</span></div>
+          <div class="legend-item"><span class="badge b-rumour">Rumour</span></div>
+        </div>
+      </div>
+
+      <div id="path-card" class="path-card" aria-live="polite" hidden></div>
+      <div id="stage-banner" class="stage-banner" role="alert" hidden></div>
+      <div id="tooltip" class="tooltip" hidden></div>
+      <div id="graph-empty" class="graph-empty" hidden>
+        <p class="caps">Empty board</p>
+        <p class="hint">Search players, open a club or ask the agent to place nodes here.</p>
+      </div>
+
+      <aside id="drawer" class="drawer" aria-label="Selection" aria-hidden="true">
+        <div class="drawer-head">
+          <div>
+            <div id="drawer-kind" class="caps drawer-kind"></div>
+            <h2 id="drawer-title" class="drawer-title"></h2>
+          </div>
+          <button type="button" id="drawer-close" class="btn btn-ghost btn-sm" aria-label="Close panel">Close</button>
+        </div>
+        <div id="drawer-body" class="drawer-body"></div>
+      </aside>
+
+      <section id="selftest-panel" class="selftest-panel" hidden>
+        <div class="row between">
+          <div class="caps section-label">Self-test · every read route</div>
+          <button type="button" id="selftest-close" class="btn btn-ghost btn-sm">Close</button>
+        </div>
+        <div id="selftest"></div>
+      </section>
+    </section>
+  </main>
+
+  <div id="toasts" class="toasts" aria-live="assertive"></div>
+  <div id="js-errors" hidden></div>
+
+  <script src="/ui/d3.v7.9.0.min.js"></script>
+  <script src="/ui/app.js"></script>
+</body>
+</html>

@@ -21,14 +21,18 @@ import feedparser
 import httpx
 from pydantic import BaseModel, Field
 
+from app.agent.names import CLUB_FILLER, expand_nickname, prefer_first_teams
 from app.database.neo4j import Neo4jClient
 from app.llm.client import get_chat_model, structured
 from app.models.rumours import ImportReport, ImportRequest, RumourOut
 
+# Checked on 2026-10-21: the Guardian moved its transfers feed (the old /football/transfers/rss is a 404), the general
+# BBC football feed had almost no transfer news, and "transfer" + football on GDELT also matched NFL trades.
 DEFAULT_FEEDS = [
-    "https://www.theguardian.com/football/transfers/rss",
-    "https://feeds.bbci.co.uk/sport/football/rss.xml",
-    "https://api.gdeltproject.org/api/v2/doc/doc?query=%22transfer%22%20football%20sourcelang:english"
+    "https://www.theguardian.com/football/transfer-window/rss",
+    "https://feeds.bbci.co.uk/sport/football/gossip/rss.xml",
+    "https://www.skysports.com/rss/12040",
+    "https://api.gdeltproject.org/api/v2/doc/doc?query=%22transfer%20fee%22%20sourcelang:english"
     + "&mode=artlist&format=json&maxrecords=50&sort=datedesc",
 ]
 MAX_TEXT_CHARS = 4000
@@ -85,7 +89,7 @@ _RESOLVE_CLUB = """
 CALL db.index.fulltext.queryNodes('club_name_ft', $query) YIELD node, score
 RETURN node.club_id AS id, node.name AS name, score
 ORDER BY score DESC, id ASC
-LIMIT 5
+LIMIT 10
 """
 
 # A rumour already pending on the same player and club is reinforced by the new article, not duplicated.
@@ -219,13 +223,30 @@ def lucene_query(name: str) -> str:
     return " ".join(f"{word}~1" if len(word) >= 4 else word for word in normalise(name).split())
 
 
-def pick_unique(name: str, candidates: list[dict[str, Any]]) -> int | None:
-    """The id of the only candidate whose name contains every word of `name`; None when zero or several do."""
+def club_words(name: str) -> set[str]:
+    """Words of a club name without the generic ones: "Liverpool Football Club" and "Liverpool FC" both give
+    {"liverpool"} (the extraction model often writes the long form)."""
     words = set(normalise(name).split())
+    return (words - CLUB_FILLER) or words
+
+
+def pick_unique(name: str, candidates: list[dict[str, Any]], club: bool = False) -> int | None:
+    """The id of the only candidate whose name contains every word of `name`; None when zero or several do.
+
+    For clubs, youth and reserve teams are set aside unless `name` names one ("Real Madrid" in an article is the first
+    team, not Real Madrid U19), and a club whose name is exactly `name` wins over longer ones ("Arsenal" is
+    Arsenal FC, not Arsenal Sarandí). Both cases left most club names unresolved on the real graph.
+    """
+    words = club_words(name) if club else set(normalise(name).split())
     if not words:
         return None
-    fitting = [row["id"] for row in candidates if words <= set(normalise(row["name"]).split())]
-    return fitting[0] if len(fitting) == 1 else None
+    candidate_words = club_words if club else (lambda text: set(normalise(text).split()))
+    fitting = [row for row in candidates if words <= candidate_words(row["name"])]
+    if club:
+        fitting = [fitting[index] for index in prefer_first_teams(name, [row["name"] for row in fitting])]
+        exact = [row for row in fitting if club_words(row["name"]) == words]
+        fitting = exact if len(exact) == 1 else fitting
+    return fitting[0]["id"] if len(fitting) == 1 else None
 
 
 def quote_in_text(quote: str, text: str) -> bool:
@@ -332,12 +353,14 @@ class RumourService:
             [("system", EXTRACTION_PROMPT), ("human", text)]
         )
 
-    def _resolve(self, query: str, name: str) -> int | None:
+    def _resolve(self, query: str, name: str, club: bool = False) -> int | None:
         """Resolve one name through a full-text index; None unless exactly one node fits."""
-        lucene = lucene_query(name)
+        if club:
+            name = expand_nickname(name)
+        lucene = lucene_query(" ".join(sorted(club_words(name))) if club else name)
         if not lucene:
             return None
-        return pick_unique(name, self.client.read(query, {"query": lucene}))
+        return pick_unique(name, self.client.read(query, {"query": lucene}), club=club)
 
     def _store(self, article: RawArticle, extraction: ArticleExtraction, report: ImportReport) -> int:
         """Save the article and its resolved rumours; return how many rumours are new."""
@@ -348,7 +371,7 @@ class RumourService:
                 report.rejected_quotes += 1
                 continue
             player_id = self._resolve(_RESOLVE_PLAYER, rumour.player)
-            club_id = self._resolve(_RESOLVE_CLUB, rumour.club)
+            club_id = self._resolve(_RESOLVE_CLUB, rumour.club, club=True)
             report.unresolved_names += (player_id is None) + (club_id is None)
             for name, found in ((rumour.player, player_id), (rumour.club, club_id)):
                 if found is None and name not in report.unresolved_examples and len(report.unresolved_examples) < 20:

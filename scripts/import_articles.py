@@ -1,7 +1,7 @@
 """Import press articles and extract transfer rumours. Owner: D.
 
 Run with `python -m scripts.import_articles` (default feeds) or
-`python -m scripts.import_articles --feed https://www.theguardian.com/football/transfers/rss --max 20`.
+`python -m scripts.import_articles --feed https://www.theguardian.com/football/transfer-window/rss --max 20`.
 It spends LLM credit (one small-model call per new article): articles already in the graph are skipped.
 """
 

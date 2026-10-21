@@ -18,10 +18,10 @@ question ──► router rules ──► router model ──► planner (tools)
 
 | Guardrail | What it blocks | Test |
 | --- | --- | --- |
-| Deterministic rules (regex) on the question | Betting and odds, match scores, judging a player's level ("is X better than Y", "is X good"), write requests (delete, remove, update, `DETACH`…). Refused with a reason and **no LLM call** | `test_out_of_scope_questions_are_refused_without_any_llm_call` |
+| Deterministic rules (regex) on the question | Betting and odds, match scores, judging a player's level ("is X better than Y", "is X good"), write requests (delete, remove, "update the …", `DETACH`…). Refused with a reason and **no LLM call**. The rules only match unambiguous phrasings: on the real graph, bare words refused real questions ("Paris" Saint-Germain read as French *paris* = bets, a PageRank "score", a value that "drops") | `test_out_of_scope_questions_are_refused_without_any_llm_call`, `test_real_questions_are_not_caught_by_the_rules`, `test_unambiguous_requests_are_still_refused_by_the_rules` |
 | Router model (`RouteDecision`) | Subtler out-of-scope requests the rules miss ("Set X's value to 50 M", "capital of Portugal") | `test_router_model_can_refuse_too` |
 | Router fallback | The small model hanging (it timed out 3 × 60 s on one evaluation question): the large model takes over, and small calls give up after 30 s | `test_router_falls_back_to_the_large_model_when_the_small_one_fails` |
-| Name resolution against the graph | Guessing between homonyms: "Gabriel" matches Gabriel Souza (8) and Gabriel Rocha (9), so the agent asks which one (`needs_clarification`) instead of picking one | `test_ambiguous_name_triggers_a_clarifying_question` |
+| Name resolution against the graph | Guessing between homonyms: "Gabriel" matches Gabriel Souza (8) and Gabriel Rocha (9), so the agent asks which one (`needs_clarification`) instead of picking one. A first team wins over its youth, B and reserve teams ("Benfica" is SL Benfica, not Benfica U19), and a few unambiguous nicknames ("PSG") are expanded first | `test_ambiguous_name_triggers_a_clarifying_question`, `test_first_team_wins_over_its_youth_and_reserve_teams`, `test_club_nicknames_are_expanded_before_the_full_text_search` |
 
 ## 2. During planning: tools first, generated Cypher last (`app/agent/tools.py`)
 
@@ -206,5 +206,7 @@ pytest tests/test_d_agent.py::test_invented_amount_is_removed_by_the_verifier -v
 - **Rounding tolerance of 1 % on amounts.** "About 12.1 M" is accepted for 12,000,000.
 - **Dates are matched component by component.** With 2022-07-15 in a tool result, a claim citing "15" or "July"
   alone is supported by that date, whatever it says about it.
-- **The evaluation is on the mini graph** (`docs/agent_eval.md`: 39 / 40 on the second run). On the full
-  Transfermarkt graph, the same guardrails apply, but name ambiguity is far more frequent.
+- **The scored evaluation is on the mini graph** (`docs/agent_eval.md`), where every answer is known. The agent was
+  then run on the full Transfermarkt graph with 14 real questions: all handled correctly, one claim without
+  evidence removed. That run is what showed the over-broad rules and the youth-team ambiguity fixed above; on
+  real data, name ambiguity stays far more frequent ("Mbappe" alone matches Kylian and Ethan Mbappé).

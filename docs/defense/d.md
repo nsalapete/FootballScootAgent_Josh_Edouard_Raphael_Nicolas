@@ -246,3 +246,31 @@ the model. Three guardrails show up in one trace.
 - Likely question, *why is the API key on the agent a switch?*
   - Requiring it whenever `API_KEY` is set broke local `make test` runs for anyone with a key in `.env`.
   - Production sets `AGENT_REQUIRE_API_KEY=true`, and nginx rate-limits the route in every mode.
+- Wednesday 21/10, evening (final deliverables):
+  - Demo interface at `/ui`: D3 board, agent claims with evidence, every API route wired; built and reviewed in
+    three rounds (API, design, robustness, security), then checked on the real graph.
+  - `scripts/start_demo.py`: the whole demo in one command, real graph or `--mini`.
+  - ER diagram of the DuckDB source (`docs/source_er_diagram.md`), screenshots in the README.
+  - The agent and the rumour import were run on the **real** graph for the first time: seven problems the mini
+    graph could not show, all fixed with tests (see below).
+- Likely question, *was the agent ever tested on real data?*
+  - Yes. The scored evaluation stays on the mini graph, because every expected answer is known there. After it,
+    14 real questions (English and French, three traps) ran on the full graph: all handled correctly, one claim
+    without evidence removed by the verifier, 13 to 70 s per answer, 2 s per refusal.
+  - That run found seven problems, now fixed:
+    - over-broad router rules (`paris` in "Paris Saint-Germain", `score`, `drop`);
+    - youth and reserve teams making "Benfica" ambiguous;
+    - nicknames ("PSG") unknown to the full-text index;
+    - dates compared with strings in generated Cypher;
+    - the pipeline's `since` filter not echoed back;
+    - "similar" read as playing style;
+    - a dead Guardian feed.
+  - Lesson to tell the jury: a fixture proves the logic, not the vocabulary of the real data.
+- Likely question, *why build the interface into the API instead of a separate front end?*
+  - Same origin, so no CORS and no second container. It works behind the same nginx and rate limits.
+  - It is three static files plus a vendored D3, so there is no build step and nothing to download at the defense.
+  - A test checks that it uses every route and no unknown one.
+- Likely question, *can a link to the interface spend our LLM credit?*
+  - `?ask=1` sends one question per page load from a top-level page. Inside a frame it waits for a click.
+  - In production the agent route also needs the API key (`AGENT_REQUIRE_API_KEY=true`), and nginx limits it to
+    10 requests per minute.

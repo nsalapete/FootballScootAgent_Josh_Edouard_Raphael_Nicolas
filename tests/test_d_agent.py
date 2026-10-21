@@ -459,9 +459,13 @@ def test_planning_stops_at_the_time_budget(monkeypatch):
     import app.agent.graph as graph_module  # pylint: disable=import-outside-toplevel
 
     monkeypatch.setattr(graph_module, "MAX_PLANNING_SECONDS", 0.0)
-    agent, _, large = make_agent([RouteDecision()], [tool_call("value_trend", player_id=1), AgentDraft()])
+    agent, _, large = make_agent(
+        [RouteDecision()],
+        [tool_call("value_trend", player_id=1), tool_call("value_trend", player_id=1), AgentDraft()],
+    )
     answer = agent.ask("How did player 1's value evolve?")
-    assert answer.trace == [] and len(large.calls) == 2  # one planner turn, then straight to the writer
+    # The first round of tools always runs; the second request comes after the budget and goes to the writer.
+    assert [step.tool for step in answer.trace] == ["value_trend"] and len(large.calls) == 3
 
 
 class GdsWithScores(FakeGds):
@@ -489,6 +493,8 @@ def test_gds_ranking_tools():
     assert "NOT the same position" in descriptions["similar_players"]
     assert "never 'X will join Y'" in descriptions["predicted_moves"]
     assert "PREDICTED_LINK" in descriptions["cypher_fallback"] and "embedding" in descriptions["cypher_fallback"]
+    assert "ONE relationship per season" in descriptions["cypher_fallback"]
+    assert "money received" in descriptions["club_pipeline"]
 
 
 def test_query_nature_ignores_string_literals_and_rejections_keep_it():

@@ -299,12 +299,20 @@ class ToolBox:
         """Last resort: validated read-only Cypher, run in a read transaction."""
         check = self.validator.validate(query)
         nature = query_nature(query)
+        repaired = False
+        if not check.valid and all(reason.startswith("no_limit:") for reason in check.reasons):
+            # The only fault is a missing LIMIT: adding one can only shrink the result, so the tool repairs it
+            # instead of spending a planner turn (and the time budget) on a retry. Everything is validated again.
+            retry = self.validator.validate(f"{check.query} LIMIT {self.validator.max_limit}")
+            check, repaired = (retry, True) if retry.valid else (check, False)
         if not check.valid:
             error = "; ".join(check.reasons)
             return ToolResult(tool="cypher_fallback", nature=nature, data={"query": query}, error=error)
         rows = self.players.client.read(check.query)
         evidence = evidence_from_rows(rows)
         data: dict[str, Any] = {"query": check.query, "rows": rows[:100]}
+        if repaired:
+            data["repaired"] = f"LIMIT {self.validator.max_limit} added by the validator (it was missing)"
         if not rows:
             data["note"] = "No row: check the property names against the schema (there is no `id` property)."
         elif not evidence:

@@ -541,3 +541,14 @@ def test_rounding_tolerance_only_for_amounts():
     assert number_is_supported(12_100_000, {12_000_000.0})  # "about 12.1 M"
     assert number_is_supported(0.42, {0.42}) and number_is_supported(42, {0.42})  # 42 %
     assert not number_is_supported(2023, {2022.0}) and not number_is_supported(23, {22.0})
+
+
+def test_a_missing_limit_is_repaired_but_nothing_else():
+    tools = ToolBox(FakePlayers(), FakeClubs(), FakeGds(), FakeRumours())
+    result = tools.cypher_fallback("MATCH (p:Player) RETURN p.player_id AS player_id")
+    assert result.error is None and result.data["query"].endswith("LIMIT 100") and "repaired" in result.data
+    assert tools.players.client.queries[-1][0].endswith("LIMIT 100")
+    still_rejected = tools.cypher_fallback("MATCH (p:Player) DETACH DELETE p RETURN p")
+    assert still_rejected.error and "write:" in still_rejected.error
+    union = tools.cypher_fallback("MATCH (p:Player) RETURN p.name AS n UNION MATCH (c:Club) RETURN c.name AS n")
+    assert union.error and "no_limit" in union.error  # a LIMIT at the end would not bound the first branch

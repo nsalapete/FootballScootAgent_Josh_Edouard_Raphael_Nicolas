@@ -47,13 +47,15 @@ un label, une relation ou une propriété listés ici sans prévenir toute l'éq
 (:Club)-[:PREDICTED_LINK {prob, model_version}]->(:Club)                   // C : nouvelle paire de clubs prédite
 ```
 
+Diagramme : `docs/schema.drawio` (draw.io) et sa version Mermaid dans `docs/modeling.md`.
+
 ## Contraintes et index
 
 Définis dans `scripts/constraints.cypher` (idempotent) : 8 contraintes d'unicité (une par clé ci-dessus),
 index composite `Player(position, date_of_birth)`, index `Player(market_value_eur)`, `Transfer(date)`,
 `Rumour(status)`, et deux index full-text dont les **noms sont un contrat** : `player_name_ft` et `club_name_ft`.
 
-## Choix de modélisation (résumé, détail dans le README)
+## Choix de modélisation (résumé, détail dans `docs/modeling.md`)
 
 - Le transfert est un nœud : il porte montant, prêt et date, et une rumeur confirmée pointe vers lui.
 - Les 1,8 M d'apparitions ne sont pas chargées : elles sont agrégées en `PLAYED_WITH`.

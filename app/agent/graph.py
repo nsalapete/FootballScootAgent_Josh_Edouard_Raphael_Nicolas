@@ -23,6 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from app.agent.evidence import GraphEvidence, number_is_supported, numbers_in_data, numbers_in_text
+from app.agent.names import is_second_team
 from app.agent.tools import ToolBox, ToolResult, failure
 from app.llm.client import get_chat_model, structured
 from app.models.agent import AgentAnswer, Claim, Nature, ToolCall
@@ -34,23 +35,30 @@ MAX_PLANNER_TURNS = 8
 MAX_PLANNING_SECONDS = 60.0
 
 # Deterministic out-of-scope rules (checked before any LLM call): (pattern, reason shown to the user).
+# They only catch unambiguous phrasings: a bare word that also names a club or a graph metric ("Paris" Saint-Germain,
+# PageRank "score", a value that "drops") would refuse real questions. The router model catches the rest.
 OUT_OF_SCOPE_RULES = [
     (
-        r"\b(bet|bets|betting|odds|bookmakers?|paris?|parier|cotes?)\b",
+        r"\b(bet|bets|betting|odds|bookmakers?|wager\w*|gambl\w*|parier|paris sportifs?|pari sportif|"
+        + r"cotes? (?:des|du|de) (?:paris|bookmakers?|match))\b",
         "Betting advice is out of scope: the agent only reports transfer, valuation and network facts.",
     ),
     (
-        r"\b(score|scoreline|who will win|qui va gagner|r[ée]sultat du match|final score)\b",
+        r"\b(scoreline|final score|match score|score of (?:the )?(?:match|game)|score of .{1,60}\b(?:against|vs\.?|"
+        + r"versus)|who will win|which team will win|qui va gagner|r[ée]sultat du match|score (?:du|final))\b",
         "Match results and scores are out of scope: the graph holds transfers, not matches to come.",
     ),
     (
-        r"\b(better|best player|worst|overrated|underrated|world[- ]class|meilleur joueur|pire|surcot[ée]|"
-        + r"sous-cot[ée]|niveau|talented|is .+ good|est[- ]il bon|est bon)\b",
+        r"\b(is [^?]{1,40} better than|who'?s better|better player|best player|worst player|overrated|underrated|"
+        + r"world[- ]class|meilleur joueur|pire joueur|surcot[ée]|sous-cot[ée]|(?:son|quel|le) niveau|talented|"
+        + r"is [^?]{1,40} (?:a )?good (?:player|footballer|signing)|est[- ]il bon|est bon)\b",
         "Judging a player's level is out of scope: the agent reports facts, predictions and rumours, not opinions.",
     ),
     (
-        r"\b(delete|remove|drop|detach|insert|update|modify|supprim\w*|efface\w*|modifi\w*|ajoute\w*|"
-        + r"mets? [àa] jour|set the|change the)\b",
+        r"\b(delete|remove|detach|insert|modify|supprim\w*|efface\w*|modifi\w*|ajoute\w*|mets? [àa] jour|"
+        + r"set the|set [^?.]{1,40}'s (?:market )?value|change the (?:value|data|graph|database)|"
+        + r"drop (?:the|all|every|database|index|constraint)|update (?:the|all|every|his|her|their) "
+        + r"(?:value|data|graph|database|record|transfer|rumour|player|club)s?)\b",
         "Changing the graph is not allowed: the agent is read-only.",
     ),
 ]
@@ -74,6 +82,7 @@ Split it into short claims. For each claim:
   prediction or a rumour as a fact.
 - `evidence_ids` are copied from the `evidence_ids` of the tool results (form `Label:id`).
 - copy every number exactly as it appears in the tool results.
+Results of `similar_players` mean shared teammate circles (same squads), not the same position or style: say so.
 If the results do not answer the question, say so in one claim-free sentence."""
 
 
@@ -329,7 +338,14 @@ def collect_support(state: AgentState) -> tuple[dict[str, set[str]], set[float]]
 
 
 def pick_match(name: str, matches: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The match a name refers to, or None when several candidates are too close to choose."""
+    """The match a name refers to, or None when several candidates are too close to choose.
+
+    A first team wins over its youth and reserve teams unless the question names one of them: on the real graph
+    "Benfica" also matches Benfica B, U19, U23 and U17, and the user means the first team.
+    """
+    if not is_second_team(name):
+        first_teams = [match for match in matches if match.get("kind") != "club" or not is_second_team(match["name"])]
+        matches = first_teams or matches
     exact = [match for match in matches if match["name"].casefold() == name.strip().casefold()]
     if len(exact) == 1:
         return exact[0]

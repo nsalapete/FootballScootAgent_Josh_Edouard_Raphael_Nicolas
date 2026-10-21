@@ -305,9 +305,92 @@ def test_teammate_path_same_player(service):
 
 
 @pytest.mark.neo4j
-@pytest.mark.parametrize("value", ["Defender' OR 1=1 //", "Defender\" OR true RETURN p //", "x}) DETACH DELETE p //"])
+@pytest.mark.parametrize("value", ["Defender' OR 1=1 //", 'Defender" OR true RETURN p //', "x}) DETACH DELETE p //"])
 def test_search_values_never_become_cypher(service, value):
     # Values travel in params: an injection attempt is just a position that no player has.
     assert not service.search(PlayerSearch(position=value)).items
     assert not service.search(PlayerSearch(competition_id=value)).items
     assert service.get(1) is not None
+
+
+# ---------- players without a market value (own data, removed afterwards) ----------
+
+UNVALUED_ORDER = [-9105, -9101, -9103, -9104, -9102]  # 3 M (id -9105 first), 3 M, 1 M, then no value by id
+
+
+@pytest.fixture(name="unvalued_players")
+def unvalued_players_fixture(neo4j_db):
+    """Five players of a test-only position, two of them without a market value."""
+    rows = [
+        {"id": -9101, "value": 3_000_000},
+        {"id": -9102, "value": None},
+        {"id": -9103, "value": 1_000_000},
+        {"id": -9104, "value": None},
+        {"id": -9105, "value": 3_000_000},
+    ]
+    neo4j_db.write(
+        "UNWIND $rows AS row CREATE (:Player {player_id: row.id, name: 'test-b-player', "
+        "position: 'test-b-position', market_value_eur: row.value})",
+        {"rows": rows},
+    )
+    yield
+    neo4j_db.write("MATCH (p:Player {position: 'test-b-position'}) DETACH DELETE p")
+
+
+@pytest.mark.neo4j
+@pytest.mark.parametrize("limit", [1, 2, 3, 5])
+def test_search_pages_cross_from_valued_to_unvalued_players(service, unvalued_players, limit):
+    seen, cursor = [], None
+    for _ in range(10):
+        page = service.search(PlayerSearch(position="test-b-position", limit=limit, cursor=cursor))
+        seen += ids(page)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert seen == UNVALUED_ORDER
+
+
+@pytest.mark.neo4j
+def test_search_budget_excludes_unknown_values(service, unvalued_players):
+    page = service.search(PlayerSearch(position="test-b-position", max_value_eur=2_000_000))
+    assert ids(page) == [-9103]
+
+
+class ScriptedClient:
+    """Answers `rows_valued` to the valued query and `rows_unvalued` to the other one; records every query."""
+
+    def __init__(self, rows_valued, rows_unvalued):
+        self.rows = {True: rows_valued, False: rows_unvalued}
+        self.calls = []
+
+    def read(self, query, params=None):
+        """Record the query and return the scripted rows."""
+        self.calls.append((query, params))
+        return self.rows["IS NOT NULL" in query][: params["limit"]]
+
+
+def fake_rows(*player_ids, value=1):
+    """Search rows for `player_ids`, all with the same value key."""
+    return [{"player_id": pid, "name": f"p{pid}", "value_key": value} for pid in player_ids]
+
+
+def test_search_skips_unvalued_query_when_page_is_full():
+    client = ScriptedClient(fake_rows(1, 2, 3), fake_rows(9, value=-1))
+    page = PlayerService(client).search(PlayerSearch(limit=2))
+    assert ids(page) == [1, 2]
+    assert len(client.calls) == 1
+
+
+def test_search_completes_page_with_unvalued_players():
+    client = ScriptedClient(fake_rows(1), fake_rows(8, 9, value=-1))
+    page = PlayerService(client).search(PlayerSearch(limit=2))
+    assert ids(page) == [1, 8]
+    assert decode_cursor(page.next_cursor) == (-1, 8)
+    assert [params["limit"] for _, params in client.calls] == [3, 2]
+
+
+def test_search_cursor_in_unvalued_phase_skips_valued_query():
+    client = ScriptedClient(fake_rows(1), fake_rows(9, value=-1))
+    PlayerService(client).search(PlayerSearch(limit=2, cursor=encode_cursor(-1, 8)))
+    assert len(client.calls) == 1
+    assert "p.player_id > $cursor_id" in client.calls[0][0]

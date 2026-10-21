@@ -156,14 +156,18 @@ Cost: two small aggregate queries per `for_player` call (one over the decided ru
 **Figures to know.** The evaluation has 40 questions on the mini graph: 30 answerable, 10 traps. It ran with
 NanoGPT (minimax-m3.1-flash small, mimo-v2.6-pro large).
 
-| | Run 1 | Run 2 |
-| --- | --- | --- |
-| Correct | 26 / 40 | **39 / 40** |
-| Traps | 10 / 10 | 10 / 10 |
-| Claims removed | 34 | 5 |
-| Generated Cypher calls / rejected | 45 / 5 | 21 / 2 |
-| Mean latency | 49 s | 40 s |
-| Cost | $0.12 | $0.11 |
+| | Run 1 | Run 2 | Run 3 (final, DeepSeek) |
+| --- | --- | --- | --- |
+| Correct | 26 / 40 | 39 / 40 | **38 / 40** |
+| Traps | 10 / 10 | 10 / 10 | 10 / 10 |
+| Claims removed | 34 | 5 | 0 |
+| Generated Cypher calls / rejected | 45 / 5 | 21 / 2 | 15 / 4 |
+| Mean latency | 49 s | 40 s | 23 s (p95 68 s, max 72 s) |
+| Cost | $0.12 | $0.11 | $0.04 |
+
+Why 38 and not 39: run 3 is stricter, because C's review tightened the checks. Its two failures were a missing
+`LIMIT` that the 60 s budget left no turn to fix. The tool now adds a missing `LIMIT`, and both questions pass
+(checked one by one).
 
 **What the evaluation taught us** (be ready to tell it as a story: it shows the guardrails doing their job):
 1. NanoGPT models refuse LangChain's structured output (both `json_schema` and forced tool calls). We switched to a

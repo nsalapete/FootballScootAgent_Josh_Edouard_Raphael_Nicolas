@@ -243,13 +243,16 @@ question → router (rules, then small model) → planner (large model + tools, 
     source.
 - **Evaluation.** 40 questions on the mini graph, 10 of them traps, with NanoGPT models:
 
-  | | Run 1 | Run 2 |
-  | --- | --- | --- |
-  | Correct answers | 26 / 40 | **39 / 40** |
-  | Traps handled | 10 / 10 | 10 / 10 |
-  | Claims removed | 34 | 5 |
-  | Mean latency | 49 s | 40 s |
-  | Cost of the run | $0.12 | $0.11 |
+  | | Run 1 | Run 2 | Run 3 (final) |
+  | --- | --- | --- | --- |
+  | Correct answers | 26 / 40 | 39 / 40 | **38 / 40** |
+  | Traps handled | 10 / 10 | 10 / 10 | 10 / 10 |
+  | Claims removed | 34 | 5 | 0 |
+  | Mean latency | 49 s | 40 s | 23 s (p95 68 s) |
+  | Cost of the run | $0.12 | $0.11 | $0.04 |
+
+  Run 3 used DeepSeek as the large model, after C's review. Its two failures came from a missing `LIMIT` that the
+  time budget left no turn to fix; the tool now adds it, and both questions pass.
 
   `docs/agent_eval.md` explains what changed between the two runs. Re-run with `python -m scripts.agent_eval`.
 

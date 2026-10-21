@@ -22,24 +22,24 @@ flowchart LR
     Article([Article])
     Rumour([Rumour])
 
-    Player -- MADE --> Transfer
-    Transfer -- FROM --> Club
-    Transfer -- TO --> Club
-    Player -- PLAYS_FOR --> Club
-    Player -- HAS_VALUATION --> Valuation
-    Player -- CITIZEN_OF --> Country
-    Club -- "PLAYS_IN {season}" --> Competition
-    Competition -- IN_COUNTRY --> Country
+    Player -->|MADE| Transfer
+    Transfer -->|FROM| Club
+    Transfer -->|TO| Club
+    Player -->|PLAYS_FOR| Club
+    Player -->|HAS_VALUATION| Valuation
+    Player -->|CITIZEN_OF| Country
+    Club -->|"PLAYS_IN {season}"| Competition
+    Competition -->|IN_COUNTRY| Country
 
-    Player -. "PLAYED_WITH {matches, first_season, last_season}" .- Player
-    Club -. "SENDS_TO {count, total_fee_eur}" .-> Club
+    Player -.-|"PLAYED_WITH {matches, first_season, last_season}"| Player
+    Club -.->|"SENDS_TO {count, total_fee_eur}"| Club
 
-    Article -- REPORTS --> Rumour
-    Rumour -- ABOUT --> Player
-    Rumour -- TARGET --> Club
-    Rumour -- CONFIRMED_BY --> Transfer
-    Player -. "PREDICTED_MOVE {prob, model_version}" .-> Club
-    Club -. "PREDICTED_LINK {prob, model_version}" .-> Club
+    Article -->|REPORTS| Rumour
+    Rumour -->|ABOUT| Player
+    Rumour -->|TARGET| Club
+    Rumour -->|CONFIRMED_BY| Transfer
+    Player -.->|"PREDICTED_MOVE {prob, model_version}"| Club
+    Club -.->|"PREDICTED_LINK {prob, model_version}"| Club
 
     classDef fact fill:#dae8fc,stroke:#6c8ebf,color:#000
     classDef hypothesis fill:#ffe6cc,stroke:#d79b00,color:#000

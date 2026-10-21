@@ -15,6 +15,7 @@ trusts the LLM, it checks every claim against the graph and the tool results of 
 import json
 import operator
 import re
+import time
 from typing import Annotated, Any, Literal, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -28,6 +29,9 @@ from app.models.agent import AgentAnswer, Claim, Nature, ToolCall
 
 MAX_TOOL_CALLS = 6
 MAX_PLANNER_TURNS = 8
+# Past this many seconds the planner stops calling tools and the writer answers with what it has, so that a
+# question stays under the 120 s read timeout of the nginx proxy in front of the API.
+MAX_PLANNING_SECONDS = 60.0
 
 # Deterministic out-of-scope rules (checked before any LLM call): (pattern, reason shown to the user).
 OUT_OF_SCOPE_RULES = [
@@ -95,6 +99,7 @@ class AgentState(TypedDict, total=False):
     messages: list[BaseMessage]
     tool_calls: int
     planner_turns: int
+    started: float
     results: Annotated[list[ToolResult], operator.add]
     trace: Annotated[list[ToolCall], operator.add]
     draft: AgentDraft
@@ -151,7 +156,8 @@ class ScoutAgent:
     def ask(self, question: str) -> AgentAnswer:
         """Answer `question`; every claim carries its nature and evidence, and the trace lists each tool call."""
         state = self.graph.invoke(
-            {"question": question, "tool_calls": 0, "planner_turns": 0, "results": [], "trace": []}
+            {"question": question, "tool_calls": 0, "planner_turns": 0, "started": time.monotonic(),
+             "results": [], "trace": []}
         )
         return state["final"]
 
@@ -252,7 +258,8 @@ class ScoutAgent:
         last = state["messages"][-1]
         wants_tools = isinstance(last, AIMessage) and bool(last.tool_calls)
         within_budget = state.get("tool_calls", 0) < MAX_TOOL_CALLS
-        if wants_tools and within_budget and state.get("planner_turns", 0) < MAX_PLANNER_TURNS:
+        within_time = time.monotonic() - state.get("started", time.monotonic()) < MAX_PLANNING_SECONDS
+        if wants_tools and within_budget and within_time and state.get("planner_turns", 0) < MAX_PLANNER_TURNS:
             return "tools"
         return "writer"
 

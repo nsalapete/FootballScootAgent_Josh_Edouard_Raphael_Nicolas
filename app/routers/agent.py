@@ -1,8 +1,7 @@
 """Agent endpoint. Owner: D."""
 
-import os
-
 from fastapi import APIRouter, Depends, Security
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.agent.graph import ScoutAgent
 from app.agent.tools import ToolBox
@@ -18,16 +17,24 @@ from app.services.rumours import RumourService
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
+class AgentSettings(BaseSettings):
+    """Role D switch, read like every setting: from the environment, then `.env` (so `make run` sees it too)."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    agent_require_api_key: bool = False
+
+
 def agent_api_key(
     provided: str | None = Security(api_key_header),
     settings: Settings = Depends(get_settings),
 ) -> None:
     """Require `X-API-Key` when `AGENT_REQUIRE_API_KEY=true` (production): every question spends LLM credit.
 
-    The switch is read from the environment (`docker compose` loads `.env` into it). Off by default, so local runs,
-    tests and the mini-graph demo stay open; nginx limits the route to 10 requests per minute per IP in any case.
+    Off by default, so local runs, tests and the mini-graph demo stay open; nginx limits the route to 10 requests
+    per minute per IP in any case. Switched on without `API_KEY`, the route fails closed with 503.
     """
-    if os.getenv("AGENT_REQUIRE_API_KEY", "").strip().lower() in ("1", "true", "yes"):
+    if AgentSettings().agent_require_api_key:
         require_api_key(provided, settings)
 
 

@@ -33,3 +33,9 @@ One line per choice that the shared rules did not settle.
 - After D6: the router falls back to the large model when the small one fails (the small NanoGPT model hung on q27 every time); small-model calls give up after 30 s and 1 retry.
 - Verifier: numbers of temporal values returned by the driver (`neo4j.time.Date`) are read from their text form, as the LLM sees them (found while preparing the D7 demo: a correct date had been removed).
 - Agent route: `X-API-Key` is required on `POST /api/agent/ask` only when `AGENT_REQUIRE_API_KEY=true` (read from the environment, since `app/config.py` belongs to B): requiring it whenever `API_KEY` is set would break local `make test` runs and B's 422 test.
+- C's review: temperature 0 on both providers (reproducible evaluations); real clients are cached per configuration (connection pools reused), the fake model never.
+- C's review: the validator refuses `$parameters` (the fallback runs without params) and every GDS procedure (GDS 2.x needs a named projection that `refresh` drops; generated queries read the stored `pagerank`, `betweenness`, `community_id`).
+- C's review: new tools `club_hubs` and `transfer_gateways` on C's stored rankings; no tool for communities, whose service returns club names without ids (no evidence possible).
+- C's review: the nature of a generated query ignores string literals and is kept on rejected queries; tool natures come from `TOOL_NATURES` on success and failure.
+- C's review: only dates and times are read as text by the verifier; whole numbers below 10,000 (years, ages, counts) must match exactly, the 1 % tolerance is for amounts and decimals.
+- C's review: planning stops after 60 s (then the writer answers), to stay under the 120 s proxy timeout; `AGENT_REQUIRE_API_KEY` is read through a small settings class, so `make run` sees it in `.env` too.

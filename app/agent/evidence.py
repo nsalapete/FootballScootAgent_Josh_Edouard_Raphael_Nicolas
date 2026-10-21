@@ -3,10 +3,26 @@
 Queries are fixed strings chosen from a closed table (one per label), and the ids are passed as parameters.
 """
 
+import datetime
 import re
 from typing import Any, Iterable
 
+import neo4j.time
+
 from app.database.neo4j import Neo4jClient
+
+# Whole numbers below this are compared exactly (no rounding tolerance).
+EXACT_BELOW = 10_000
+
+TEMPORAL_TYPES = (
+    datetime.date,
+    datetime.time,
+    datetime.timedelta,
+    neo4j.time.Date,
+    neo4j.time.DateTime,
+    neo4j.time.Time,
+    neo4j.time.Duration,
+)
 
 # Label -> (Python type of the key, read query returning the keys that exist).
 _NODE_QUERIES: dict[str, tuple[type, str]] = {
@@ -107,18 +123,24 @@ def numbers_in_data(data: Any) -> set[float]:
     elif isinstance(data, (list, tuple, set)):
         for value in data:
             found |= numbers_in_data(value)
-    elif data is not None:
-        # Temporal values of the driver (`neo4j.time.Date`, `datetime.date`...) are read from their text form,
-        # exactly as the LLM sees them in the tool message.
+    elif isinstance(data, TEMPORAL_TYPES):
+        # Dates and times are read from their text form, exactly as the LLM sees them in the tool message.
+        # Only these: the text of a driver Node or Point would bring internal ids in as "known" numbers.
         found |= numbers_in_data(str(data))
     return found
 
 
 def number_is_supported(value: float, known: set[float]) -> bool:
-    """True when `value` matches a known number, allowing rounding (1 %) and percentages of probabilities."""
+    """True when `value` matches a known number, allowing rounding (1 %) and percentages of probabilities.
+
+    Small whole numbers (years, ages, counts, hops) must match exactly: 1 % of 2022 would let 2023 through.
+    """
     candidates = (value, value / 100)
     for candidate in candidates:
+        exact_only = float(candidate).is_integer() and abs(candidate) < EXACT_BELOW
         for number in known:
-            if number == candidate or (number and abs(number - candidate) <= 0.01 * abs(number)):
+            if number == candidate:
+                return True
+            if not exact_only and number and abs(number - candidate) <= 0.01 * abs(number):
                 return True
     return False

@@ -440,3 +440,98 @@ def test_agent_requires_the_api_key_when_switched_on(api_no_db, monkeypatch):
         assert response.status_code == 200 and response.json()["refused"]
     finally:
         get_settings.cache_clear()
+
+
+def test_switch_on_without_server_key_fails_closed(api_no_db, monkeypatch):
+    from app.config import get_settings  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setenv("AGENT_REQUIRE_API_KEY", "true")
+    monkeypatch.setenv("API_KEY", "")
+    get_settings.cache_clear()
+    try:
+        response = api_no_db.post("/api/agent/ask", json={"question": "Which bookmaker has the best odds?"})
+        assert response.status_code == 503
+    finally:
+        get_settings.cache_clear()
+
+
+def test_planning_stops_at_the_time_budget(monkeypatch):
+    import app.agent.graph as graph_module  # pylint: disable=import-outside-toplevel
+
+    monkeypatch.setattr(graph_module, "MAX_PLANNING_SECONDS", 0.0)
+    agent, _, large = make_agent([RouteDecision()], [tool_call("value_trend", player_id=1), AgentDraft()])
+    answer = agent.ask("How did player 1's value evolve?")
+    assert answer.trace == [] and len(large.calls) == 2  # one planner turn, then straight to the writer
+
+
+class GdsWithScores(FakeGds):
+    """Adds the stored GDS rankings."""
+
+    def hubs(self, limit=20):
+        """Kingsbridge first."""
+        from app.models.network import ClubScore  # pylint: disable=import-outside-toplevel
+
+        return [ClubScore(club_id=4, name="Kingsbridge United", score=0.31)][:limit]
+
+    def gateways(self, limit=20):
+        """Harrowgate first."""
+        from app.models.network import ClubScore  # pylint: disable=import-outside-toplevel
+
+        return [ClubScore(club_id=5, name="Harrowgate FC", score=0.12)][:limit]
+
+
+def test_gds_ranking_tools():
+    tools = ToolBox(FakePlayers(), FakeClubs(), GdsWithScores(), FakeRumours())
+    hubs, gateways = tools.run("club_hubs", {"limit": 3}), tools.run("transfer_gateways", {})
+    assert hubs.evidence_ids == ["Club:4"] and hubs.data["metric"] == "pagerank" and hubs.nature == "verified"
+    assert gateways.evidence_ids == ["Club:5"] and gateways.data["metric"] == "betweenness"
+    descriptions = {tool.name: tool.description for tool in tools.as_langchain_tools()}
+    assert "NOT the same position" in descriptions["similar_players"]
+    assert "never 'X will join Y'" in descriptions["predicted_moves"]
+    assert "PREDICTED_LINK" in descriptions["cypher_fallback"] and "embedding" in descriptions["cypher_fallback"]
+
+
+def test_query_nature_ignores_string_literals_and_rejections_keep_it():
+    from app.agent.tools import query_nature  # pylint: disable=import-outside-toplevel
+
+    assert query_nature("MATCH (c:Club) WHERE c.name = 'Rumour FC' RETURN c.club_id AS club_id LIMIT 1") == "verified"
+    assert query_nature("MATCH (r:Rumour)-[:ABOUT]->(p) RETURN r LIMIT 1") == "rumour"
+    assert query_nature("MATCH (a)-[l:PREDICTED_LINK]->(b) RETURN l LIMIT 1") == "predicted"
+    tools = ToolBox(FakePlayers(), FakeClubs(), FakeGds(), FakeRumours())
+    rejected = tools.cypher_fallback("MATCH (r:Rumour) RETURN r LIMIT 500")
+    assert rejected.error and rejected.nature == "rumour"
+
+
+def test_prediction_from_the_fallback_cannot_be_presented_as_fact():
+    query = ("MATCH (a:Club)-[l:PREDICTED_LINK]->(b:Club) RETURN a.club_id AS club_id, b.name AS target, "
+             "l.prob AS prob LIMIT 5")
+    as_fact = Claim(text="SC Alvorada will trade with Harrowgate FC.", nature="verified", evidence_ids=["Club:7"])
+    agent, _, _ = make_agent([RouteDecision()], [tool_call("cypher_fallback", query=query), AIMessage("ok"),
+                                                 AgentDraft(answer="x", claims=[as_fact])])
+    agent.tools.players.client.rows = [{"club_id": 7, "target": "Harrowgate FC", "prob": 0.37}]
+    answer = agent.ask("Which new club pairs are predicted?")
+    assert answer.claims == [] and "nature" in answer.removed_claims[0].removal_reason
+
+
+def test_only_temporal_values_are_read_as_text_by_the_verifier():
+    from neo4j.time import Date  # pylint: disable=import-outside-toplevel
+
+    from app.agent.evidence import number_is_supported, numbers_in_data  # pylint: disable=import-outside-toplevel
+
+    class NodeLike:
+        """Stands for a driver Node whose text form carries internal ids."""
+
+        def __str__(self):
+            return "<Node element_id='4:abc:1234' id=987654>"
+
+    known = numbers_in_data([{"date": Date(2022, 7, 15), "node": NodeLike()}])
+    assert 987654.0 not in known and 1234.0 not in known
+    assert not number_is_supported(16.0, known) and not number_is_supported(2023.0, known)
+
+
+def test_rounding_tolerance_only_for_amounts():
+    from app.agent.evidence import number_is_supported  # pylint: disable=import-outside-toplevel
+
+    assert number_is_supported(12_100_000, {12_000_000.0})  # "about 12.1 M"
+    assert number_is_supported(0.42, {0.42}) and number_is_supported(42, {0.42})  # 42 %
+    assert not number_is_supported(2023, {2022.0}) and not number_is_supported(23, {22.0})

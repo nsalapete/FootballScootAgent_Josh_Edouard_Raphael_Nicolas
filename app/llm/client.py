@@ -6,6 +6,7 @@ OpenAI-compatible API, using `LLM_BASE_URL`) or `fake` (deterministic, no networ
 
 import json
 import re
+from functools import lru_cache
 from itertools import count
 from typing import Any, Callable, Literal
 
@@ -37,6 +38,8 @@ def _to_message(item: Any, default_reply: str) -> AIMessage:
         return item
     if isinstance(item, BaseModel):
         return AIMessage(content=item.model_dump_json())
+    if isinstance(item, (dict, list)):
+        return AIMessage(content=json.dumps(item, ensure_ascii=False))
     return AIMessage(content=str(item))
 
 
@@ -102,40 +105,44 @@ class FakeChatModel(BaseChatModel):  # pylint: disable=abstract-method
 LIMITS = {"small": (30, 1), "large": (60, 2)}
 
 
-def _build_anthropic(model: str, size: str) -> BaseChatModel:
-    """Claude through the Anthropic API."""
+def _build_anthropic(model: str, size: str, api_key: str, _base_url: str) -> BaseChatModel:
+    """Claude through the Anthropic API (temperature 0: reproducible answers and evaluations)."""
     from langchain_anthropic import ChatAnthropic  # pylint: disable=import-outside-toplevel
 
-    settings = get_settings()
     return ChatAnthropic(
         model=model,
-        api_key=settings.anthropic_api_key or None,
+        api_key=api_key or None,
+        temperature=0,
         max_tokens=2048,
         timeout=LIMITS[size][0],
         max_retries=LIMITS[size][1],
     )
 
 
-def _build_openai_compatible(model: str, size: str) -> BaseChatModel:
+def _build_openai_compatible(model: str, size: str, api_key: str, base_url: str) -> BaseChatModel:
     """Any OpenAI-compatible endpoint (NanoGPT, a local server...) reached through `LLM_BASE_URL`."""
     from langchain_openai import ChatOpenAI  # pylint: disable=import-outside-toplevel
 
-    settings = get_settings()
     return ChatOpenAI(
         model=model,
-        base_url=settings.llm_base_url or None,
-        api_key=settings.openai_api_key or None,
+        base_url=base_url or None,
+        api_key=api_key or None,
         temperature=0,
         timeout=LIMITS[size][0],
         max_retries=LIMITS[size][1],
     )
 
 
-_BUILDERS: dict[str, Callable[[str, str], BaseChatModel]] = {
+_BUILDERS: dict[str, Callable[[str, str, str, str], BaseChatModel]] = {
     "anthropic": _build_anthropic,
     "openai_compatible": _build_openai_compatible,
-    "fake": lambda _model, _size: FakeChatModel(),
 }
+
+
+@lru_cache(maxsize=8)
+def _cached_model(provider: str, model: str, size: str, api_key: str, base_url: str) -> BaseChatModel:
+    """One client per configuration, so that every request reuses its HTTP connection pool."""
+    return _BUILDERS[provider](model, size, api_key, base_url)
 
 
 def structured(model: BaseChatModel, schema: type[BaseModel]):
@@ -184,7 +191,10 @@ def get_chat_model(size: ModelSize = "small"):
         raise ValueError(f"Unknown model size {size!r}: expected 'small' or 'large'")
     settings = get_settings()
     provider = settings.llm_provider.strip().lower()
-    if provider not in _BUILDERS:
+    if provider not in PROVIDERS:
         raise ValueError(f"Unknown LLM_PROVIDER {provider!r}: expected one of {', '.join(PROVIDERS)}")
+    if provider == "fake":
+        return FakeChatModel()  # never cached: a fake model holds its own script
     model = settings.llm_model_small if size == "small" else settings.llm_model_large
-    return _BUILDERS[provider](model, size)
+    api_key = settings.anthropic_api_key if provider == "anthropic" else settings.openai_api_key
+    return _cached_model(provider, model, size, api_key, settings.llm_base_url)

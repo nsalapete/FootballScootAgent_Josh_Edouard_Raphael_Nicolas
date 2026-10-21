@@ -91,9 +91,15 @@ When a claim is removed, the answer text is **rebuilt from the kept claims only*
 - Tests and CI never call a real LLM: `LLM_PROVIDER=fake` is forced by `tests/conftest.py`.
 - Every LLM call has a timeout: 30 s and 1 retry for the small model, 60 s and 2 retries for the large one.
 - Secrets live only in `.env`, never in the code or in the logs.
+- **Cost abuse:** every question spends LLM credit.
+  - nginx limits `/api/agent/` to 10 requests per minute per IP (B).
+  - With `AGENT_REQUIRE_API_KEY=true` in `.env` (production), `POST /api/agent/ask` also requires the
+    `X-API-Key` header, like the rumour import.
+  - The switch is off by default, so local runs, tests and the mini-graph demo stay open.
 
 ## Demo
 
+If the server runs with `AGENT_REQUIRE_API_KEY=true`, add `-H "X-API-Key: $API_KEY"` to each call below.
 `BASE=http://localhost` behind the proxy (`make docker-up`), or `http://localhost:8000` with `make run`. The outputs
 below are real answers from NanoGPT (`xiaomi/mimo-v2.6-pro` and `minimax/minimax-m3.1-flash`) on the mini graph
 (`tests/fixtures/mini_graph.cypher`), lightly trimmed.

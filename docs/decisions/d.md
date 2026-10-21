@@ -32,3 +32,4 @@ One line per choice that the shared rules did not settle.
 - After D6: `club_pipeline` returns the club totals (transfers and fees) computed by the tool, so the agent never has to add numbers itself (the verifier removes computed figures).
 - After D6: the router falls back to the large model when the small one fails (the small NanoGPT model hung on q27 every time); small-model calls give up after 30 s and 1 retry.
 - Verifier: numbers of temporal values returned by the driver (`neo4j.time.Date`) are read from their text form, as the LLM sees them (found while preparing the D7 demo: a correct date had been removed).
+- Agent route: `X-API-Key` is required on `POST /api/agent/ask` only when `AGENT_REQUIRE_API_KEY=true` (read from the environment, since `app/config.py` belongs to B): requiring it whenever `API_KEY` is set would break local `make test` runs and B's 422 test.

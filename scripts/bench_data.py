@@ -13,14 +13,17 @@ Shape with the default options (fixed seed, so two runs give the same graph):
   (each one only shares players with its neighbours) that is not connected to the leagues, which gives far-apart
   pairs and pairs without any path, the two expensive cases of a shortest-path search;
 - 80,000 transfers (15 % loans, 15 % unknown fees), about 150,000 valuations, `SENDS_TO` aggregated as in the
-  ingestion.
+  ingestion;
+- the hypothesis layer, so that its reads are measured on real rows too: 3,000 articles, 5,000 rumours about 2,000
+  players (pending, confirmed with `CONFIRMED_BY`, expired, contradicted), 5 `PREDICTED_LINK` per league club and the
+  3 best of them copied to each player of the club as `PREDICTED_MOVE`, as the link-prediction job does.
 """
 
 import argparse
 import random
 import time
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -35,6 +38,9 @@ PROTECTED_PORTS = {7687: "la base de l'application", 7688: "la base de test"}
 BATCH_SIZE = 10_000
 SEASONS = range(2015, 2025)
 FIRST_LEAGUE_ID = 1
+SOURCES = [f"bench-press-{index}" for index in range(1, 9)]
+RUMOUR_STATUSES = (["pending", "confirmed", "expired", "contradicted"], [50, 20, 20, 10])
+LINKS_PER_CLUB = 5
 
 COUNTRIES = [
     ("ENG", "England"),
@@ -87,6 +93,9 @@ class Config:
     lower_clubs: int = 260
     transfers: int = 80_000
     valuations_per_player: int = 3
+    articles: int = 3_000
+    rumours: int = 5_000
+    hot_players: int = 2_000
     seed: int = 42
 
 
@@ -247,6 +256,52 @@ def generate_valuations(config: Config, rng: random.Random, players: Rows) -> Ro
     return rows
 
 
+def generate_articles(config: Config, rng: random.Random) -> Rows:
+    """Press articles (the `Article` nodes rumours are extracted from)."""
+    return [
+        {
+            "url": f"https://bench.example.org/news/{index}",
+            "source": rng.choice(SOURCES),
+            "title": f"Bench article {index}",
+            "published": random_day(rng, date(2019, 1, 1), date(2025, 6, 30)),
+        }
+        for index in range(config.articles)
+    ]
+
+
+def generate_rumours(config: Config, rng: random.Random, league_clubs: int, transfer_ids: list[str]) -> Rows:
+    """Rumours about a pool of "hot" players, each reported by one or two articles."""
+    hot = rng.sample(range(1, config.players + 1), config.hot_players)
+    urls = [f"https://bench.example.org/news/{index}" for index in range(config.articles)]
+    rows = []
+    for index in range(config.rumours):
+        status = rng.choices(*RUMOUR_STATUSES)[0]
+        player = rng.choice(hot)
+        rows.append(
+            {
+                "id": f"bench-r{index:05d}",
+                "player": player,
+                "club": rng.randint(1, league_clubs),
+                "status": status,
+                "confidence": round(rng.uniform(0.3, 0.95), 2),
+                "quote": f"A club is said to be monitoring player {player}",
+                "extracted_at": datetime(2025, 7, 1, tzinfo=timezone.utc) + timedelta(hours=index),
+                "articles": rng.sample(urls, rng.randint(1, 2)),
+                "transfer": rng.choice(transfer_ids) if status == "confirmed" else None,
+            }
+        )
+    return rows
+
+
+def generate_links(rng: random.Random, league_clubs: int, total_clubs: int) -> Rows:
+    """`PREDICTED_LINK`: a few probable destinations for each league club (properties as the ML job writes them)."""
+    rows = []
+    for club in range(1, league_clubs + 1):
+        destinations = rng.sample([other for other in range(1, total_clubs + 1) if other != club], LINKS_PER_CLUB)
+        rows += [{"src": club, "dst": dst, "prob": round(rng.uniform(0.05, 0.8), 3)} for dst in destinations]
+    return rows
+
+
 def generate(config: Config) -> dict[str, Rows]:
     """Every node and relationship of the synthetic graph, as rows ready for `UNWIND`."""
     rng = random.Random(config.seed)
@@ -256,6 +311,10 @@ def generate(config: Config) -> dict[str, Rows]:
     data["played_with"] = generate_played_with(config, rng, data["players"])
     data["transfers"] = generate_transfers(config, rng, league_clubs + config.lower_clubs)
     data["valuations"] = generate_valuations(config, rng, data["players"])
+    data["articles"] = generate_articles(config, rng)
+    data["rumours"] = generate_rumours(config, rng, league_clubs, [row["id"] for row in data["transfers"]])
+    data["confirmations"] = [row for row in data["rumours"] if row["transfer"]]
+    data["links"] = generate_links(rng, league_clubs, league_clubs + config.lower_clubs)
     return data
 
 
@@ -312,7 +371,56 @@ UNWIND $rows AS row MATCH (a:Player {player_id: row.a}), (b:Player {player_id: r
 CREATE (a)-[:PLAYED_WITH {matches: row.matches, first_season: row.first, last_season: row.last}]->(b)
 """,
     ),
+    (
+        "articles",
+        """
+UNWIND $rows AS row
+CREATE (:Article {url: row.url, source: row.source, title: row.title, published_at: row.published})
+""",
+    ),
+    (
+        "rumours",
+        """
+UNWIND $rows AS row
+MATCH (p:Player {player_id: row.player}), (c:Club {club_id: row.club})
+CREATE (r:Rumour {rumour_id: row.id, status: row.status, confidence: row.confidence, quote: row.quote,
+                  extracted_at: row.extracted_at})
+CREATE (r)-[:ABOUT]->(p)
+CREATE (r)-[:TARGET]->(c)
+WITH r, row
+UNWIND row.articles AS url
+MATCH (a:Article {url: url})
+CREATE (a)-[:REPORTS]->(r)
+""",
+    ),
+    (
+        "confirmations",
+        """
+UNWIND $rows AS row
+MATCH (r:Rumour {rumour_id: row.id}), (t:Transfer {transfer_id: row.transfer})
+CREATE (r)-[:CONFIRMED_BY]->(t)
+""",
+    ),
+    (
+        "links",
+        """
+UNWIND $rows AS row
+MATCH (src:Club {club_id: row.src}), (dst:Club {club_id: row.dst})
+CREATE (src)-[:PREDICTED_LINK {prob: row.prob, model_version: 'bench', horizon_seasons: 2, trained_until: 2024}]->(dst)
+""",
+    ),
 ]
+# Each player of a club gets the 3 best destinations of that club, as `ml/train_link_prediction.py` does.
+PREDICTED_MOVES = """
+MATCH (src:Club)<-[:PLAYS_FOR]-(p:Player)
+MATCH (src)-[l:PREDICTED_LINK]->(dst:Club)
+WITH p, dst, l ORDER BY l.prob DESC, dst.club_id
+WITH p, collect({club: dst, link: l})[..3] AS top
+UNWIND top AS move
+WITH p, move.club AS dst, move.link AS l
+CREATE (p)-[:PREDICTED_MOVE {prob: l.prob, model_version: l.model_version, horizon_seasons: l.horizon_seasons,
+                             trained_until: l.trained_until}]->(dst)
+"""
 SENDS_TO = """
 MATCH (src:Club)<-[:FROM]-(t:Transfer)-[:TO]->(dst:Club)
 WITH src, dst, count(t) AS n, sum(coalesce(t.fee_eur, 0)) AS total
@@ -323,7 +431,9 @@ CALL () { MATCH (n) RETURN count(n) AS nodes }
 CALL () { MATCH ()-[r]->() RETURN count(r) AS relationships }
 CALL () { MATCH (p:Player) RETURN count(p) AS players }
 CALL () { MATCH ()-[r:PLAYED_WITH]->() RETURN count(r) AS played_with }
-RETURN nodes, relationships, players, played_with
+CALL () { MATCH (r:Rumour) RETURN count(r) AS rumours }
+CALL () { MATCH ()-[m:PREDICTED_MOVE]->() RETURN count(m) AS predicted_moves }
+RETURN nodes, relationships, players, played_with, rumours, predicted_moves
 """
 
 
@@ -350,8 +460,9 @@ def load(client: Neo4jClient, data: dict[str, Rows]) -> dict[str, float]:
         durations[name] = time.perf_counter() - start
     start = time.perf_counter()
     client.write(SENDS_TO)
+    client.write(PREDICTED_MOVES)
     client.write("CALL db.awaitIndexes(600)")
-    durations["sends_to_and_indexes"] = time.perf_counter() - start
+    durations["derived_and_indexes"] = time.perf_counter() - start
     return durations
 
 

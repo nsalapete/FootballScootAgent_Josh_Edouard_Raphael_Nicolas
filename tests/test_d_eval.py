@@ -91,3 +91,11 @@ def test_metrics_report_and_cost():
 def test_arguments():
     args = parse_args(["--limit", "3", "--no-reload", "--price-small", "0.1", "0.2"])
     assert args.limit == 3 and args.no_reload and args.price_small == [0.1, 0.2] and args.price_large is None
+
+
+def test_latency_quantiles():
+    from scripts.agent_eval import latency_quantiles  # pylint: disable=import-outside-toplevel
+
+    stats = latency_quantiles([float(n) for n in range(1, 21)])
+    assert (stats["p50_latency_s"], stats["p95_latency_s"], stats["max_latency_s"]) == (10.0, 19.0, 20.0)
+    assert latency_quantiles([])["max_latency_s"] == 0.0

@@ -204,3 +204,14 @@ the model. Three guardrails show up in one trace.
   Reviewed A's PRs #13–#16 (2 comments each: DuckDB pre-filter, Decimal NaN, loans in `SENDS_TO`, stale
   `PLAYED_WITH`, loan false positives, pruned transfers vs `CONFIRMED_BY`, confirmation window tolerance,
   pending rumours beyond the batch limit).
+- Wednesday 21/10:
+  - D6: evaluation, two real runs, 26/40 then 39/40 (PRs #24, #26).
+  - D7: `docs/guardrails.md` with real demo outputs (PR #31).
+  - D8: full README (PR #36).
+  - Fixes: failed tools keep their nature (#22), NanoGPT structured output (#24), router fallback (#26), Neo4j dates in the verifier (#30).
+  - Production switch `AGENT_REQUIRE_API_KEY` (#35).
+  - Reviewed A's PR #32 (3 comments).
+  - Presentation deck for role D prepared, with the demo commands.
+- Likely question, *why is the API key on the agent a switch?*
+  - Requiring it whenever `API_KEY` is set broke local `make test` runs for anyone with a key in `.env`.
+  - Production sets `AGENT_REQUIRE_API_KEY=true`, and nginx rate-limits the route in every mode.

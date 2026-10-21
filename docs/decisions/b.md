@@ -94,3 +94,8 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
   recréé à partir de **sa** ligne de `scripts/constraints.cypher` et attendu (`db.awaitIndexes`) dans un `finally`.
 - **B7 · base de benchmark avec GDS** (`make bench-db`) : pour mesurer aussi le recalcul GDS étape par étape et
   `similar_players`, promis à C en relecture.
+- **Audit final** : le benchmark couvre maintenant **chaque** méthode de lecture des services (dont `exists`,
+  `latest_season`, `predicted_moves` de C et les lectures de rumeurs de D), sur un graphe synthétique qui contient
+  aussi la couche d'hypothèses (articles, rumeurs, `PREDICTED_LINK`, `PREDICTED_MOVE`) ; seuls `refresh` (chronométré à
+  part) et `import_articles` (réseau et LLM) n'y sont pas. L'énumération de tous les chemins s'arrête à 6 sauts
+  (règle du projet) ; les lectures d'échantillonnage du benchmark ont un `LIMIT`.

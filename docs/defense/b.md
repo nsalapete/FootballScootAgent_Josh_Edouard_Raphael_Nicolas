@@ -19,8 +19,8 @@ Objectif : pouvoir défendre chaque ligne du code de B sans l'avoir écrit. Les 
 
 | Méthode | Point d'entrée dans le graphe | Index utilisé | Coût |
 | --- | --- | --- | --- |
-| `search` (poste + âge) | `NodeIndexSeek` | composite `Player(position, date_of_birth)` | proportionnel au nombre de joueurs du poste dans la tranche d'âge, puis tri des `limit + 1` meilleurs (12 443 db hits, 17,5 ms p50 sur 50 000 joueurs) |
-| `search` (sans poste ni âge) | `NodeIndexScan` / `NodeIndexSeekByRange` dans l'ordre | `Player(market_value_eur)` | lit l'index dans l'ordre et s'arrête après la page : ~540 db hits, quelle que soit la profondeur |
+| `search` (poste + âge) | `NodeIndexSeek` | composite `Player(position, date_of_birth)` | proportionnel au nombre de joueurs du poste dans la tranche d'âge, puis tri des `limit + 1` meilleurs (12 506 db hits, 14,9 ms p50 sur 50 000 joueurs) |
+| `search` (sans poste ni âge) | `NodeIndexScan` / `NodeIndexSeekByRange` dans l'ordre | `Player(market_value_eur)` | lit l'index dans l'ordre et s'arrête après la page : ~600 db hits, quelle que soit la profondeur |
 | `get`, `value_trend` | `NodeUniqueIndexSeek` sur `player_id` | contrainte d'unicité | constant, plus une expansion `HAS_VALUATION` |
 | `resolve` | procédure full-text (Lucene) | `player_name_ft` / `club_name_ft` | index inversé, indépendant du nombre de nœuds |
 | `teammate_path` | 2 `NodeUniqueIndexSeek` puis BFS bidirectionnel | contrainte d'unicité | ≈ d^(h/2) nœuds visités par côté (d = coéquipiers moyens, h = sauts) |
@@ -79,9 +79,9 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
   coûte pareil, et une insertion ne décale rien.
 - **Ce que le benchmark a corrigé** : la première version triait sur `coalesce(market_value_eur, -1)` pour placer les
   joueurs sans valeur à la fin. Une expression calculée n'est servie par aucun index : chaque page, curseur ou non,
-  lisait les 50 000 joueurs (~180 000 db hits, 40 à 97 ms). Maintenant les joueurs valorisés sont lus dans l'ordre de
+  lisait les 50 000 joueurs (~180 000 db hits, 40 à 50 ms). Maintenant les joueurs valorisés sont lus dans l'ordre de
   l'index, et les joueurs sans valeur viennent d'une seconde requête lancée seulement quand les premiers sont épuisés.
-  Mesure : page 2 000, `SKIP` 82 657 db hits (27 ms), curseur 3 752 (9 ms), ancien curseur 182 254 (97 ms).
+  Mesure : page 2 000, `SKIP` 82 657 db hits (25 ms), curseur 3 774 (7,5 ms), ancien curseur 182 254 (42 ms).
 - Limite connue : à valeur égale, l'index ne trie pas par `player_id` ; un gros groupe d'égalité (beaucoup de joueurs
   à 50 000 €) doit être lu en entier. Un index composite `(market_value_eur, player_id)` réglerait ce cas.
 - `player_id` en second critère rend l'ordre **total** (deux joueurs à la même valeur restent ordonnés) : sans lui, le
@@ -111,8 +111,10 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
 - **Clé d'API** (`X-API-Key`) : sur les routes qui écrivent dans le graphe ou dépensent du crédit LLM (recalcul GDS,
   import de rumeurs). Comparaison en temps constant (`secrets.compare_digest`) contre les attaques par chronométrage.
   Si `API_KEY` est vide côté serveur, on renvoie 503 au lieu d'ouvrir la route.
-- **Ce qu'ils ne protègent pas** (à dire avant qu'on le demande) : pas de TLS (en production : certificat sur le proxy),
-  `/api/agent/ask` n'est protégé que par la limite de débit, pas par la clé (route de D, choix du squelette).
+- **L'agent** (`/api/agent/ask`, route de D) exige aussi la clé quand le serveur tourne avec
+  `AGENT_REQUIRE_API_KEY=true` (production) ; sans ce réglage (développement, tests, démonstration), seule la limite
+  de débit de nginx le protège (10 questions par minute et par IP).
+- **Ce qu'ils ne protègent pas** (à dire avant qu'on le demande) : pas de TLS (en production : certificat sur le proxy).
 
 ## 7 bis. Image publiée et documentation (B5, B6)
 
@@ -163,14 +165,14 @@ de FastAPI renvoie une liste dans `detail`. Un client (ou l'agent) lit maintenan
   coûte plus et renvoie un nombre de chemins non borné.
 - **« Comment savez-vous que l'index est utilisé ? »** `PROFILE` (voir `docs/perf.md`, section 2) : `NodeIndexSeek` sur
   `player_position_dob`, 4 077 db hits pour compter les défenseurs de 23 ans ou moins ; sans l'index,
-  `NodeByLabelScan` et 132 830 db hits (×33), 30 ms au lieu de 5.
+  `NodeByLabelScan` et 132 830 db hits (×33), 30 ms au lieu de 6.
 - **« Pourquoi l'index `Transfer(date)` n'apparaît pas dans le plan de la filière ? »** Parce que la requête part du
   club (contrainte d'unicité) : ses 234 transferts sortants sont plus sélectifs que n'importe quelle plage de dates.
   L'index sert quand il n'y a pas de club pour ancrer la requête (« tous les transferts depuis… ») : 3 910 db hits
   au lieu de 160 001.
 - **« Le planificateur fait-il toujours le bon choix ? »** Pas toujours en db hits : pour une page de défenseurs, il
-  choisit l'index composite (12 443 db hits) alors que l'index de valeur dans l'ordre en ferait 1 103 ; la latence est
-  la même à 3,5 ms près. On ne force pas `USING INDEX` : avec un poste rare, c'est le composite qui gagne.
+  choisit l'index composite (12 506 db hits) alors que l'index de valeur dans l'ordre en ferait 1 166 ; la latence est
+  la même à 5 ms près. On ne force pas `USING INDEX` : avec un poste rare, c'est le composite qui gagne.
 - **« Vos benchmarks portent sur des données inventées ? »** Oui, un graphe synthétique conforme au schéma, à graine
   fixe, dans une base séparée (port 7689) : il fixe des ordres de grandeur et compare des plans ; les db hits sont
   déterministes. Les chiffres réels de GDS viennent de C. Le script refuse de vider la base de test ou de l'application.
@@ -191,14 +193,15 @@ Détail et protocole dans `docs/perf.md` (50 000 joueurs, 220 000 `PLAYED_WITH`,
 
 | À retenir | Chiffre |
 | --- | --- |
-| Méthodes de B | p50 < 35 ms et p95 < 70 ms pour toutes ; aucune ne parcourt un label de nœuds entier |
-| Index composite (position, date_of_birth) | 4 077 db hits contre 132 830 sans (×33), 5 ms contre 30 |
-| Pagination, page 2 000 | `SKIP` 82 657 db hits / 27 ms ; curseur 3 752 / 9 ms |
-| Réécriture de `search` (B7) | ancien curseur ~180 000 db hits à chaque page ; nouveau 50 à 380 fois moins |
-| Chemin sans solution | borné `*..6` : 1 786 db hits ; non borné : 284 607 (×160) |
-| Tous les chemins sans `shortestPath` | ×9 par saut (degré moyen 8,8) : 3,4 millions de db hits à 7 sauts |
-| Recalcul GDS (C) | 5,8 s au premier appel après démarrage, 2,5 s ensuite ; chaque étape < 10 s |
-| `similar_players` (C) | 176 ms p50 en cosinus exhaustif ; 8,5 ms avec un index vectoriel (rappel@10 = 0,95) |
+| Méthodes de B | p50 < 21 ms et p95 < 40 ms pour toutes ; aucune ne parcourt un label de nœuds entier |
+| Index composite (position, date_of_birth) | 4 077 db hits contre 132 830 sans (×33), 6 ms contre 30 |
+| Pagination, page 2 000 | `SKIP` 82 657 db hits / 25 ms ; curseur 3 774 / 7,5 ms |
+| Réécriture de `search` (B7) | ancien curseur ~180 000 db hits à chaque page ; nouveau 48 à 336 fois moins, 5,6 à 7,5 fois plus rapide |
+| Chemin sans solution | borné `*..6` : 1 952 db hits ; non borné : 286 509 (×147) |
+| Tous les chemins sans `shortestPath` | ×9 par saut (degré moyen 8,8) : 382 115 db hits à 6 sauts |
+| Recalcul GDS (C) | 5,8 à 6,5 s au premier appel après démarrage, 2,4 à 2,5 s ensuite ; chaque étape < 10 s |
+| `similar_players` (C) | 176 à 295 ms p50 en cosinus exhaustif ; 8,5 à 12,3 ms avec un index vectoriel (rappel@10 = 0,95 à 0,96) |
+| Rumeurs (D) | `for_player` 30 ms p50 mais `NodeByLabelScan` sur `Article` (pas d'index sur `source`) : à signaler à D et A |
 
 ## 11. Relecture des PR de C (#10, #11, #12)
 
@@ -220,5 +223,5 @@ Points remontés à C, utiles si le jury interroge sur la cohérence entre rôle
 - Le nettoyage dépend de `date.today()` : le jeu de données change d'un jour à l'autre.
 - `PREDICTED_MOVE` est un score de **paire de clubs** recopié sur chaque joueur : à signaler dans l'API et à l'agent ;
   la probabilité n'a pas d'horizon stocké (deux saisons).
-- Les 5,2 s de la projection des clubs mesurées par C contiennent probablement l'échauffement de GDS (×15 entre le
+- Les 5,2 s de la projection des clubs mesurées par C contiennent probablement l'échauffement de GDS (×15 à ×35 entre le
   premier et le second recalcul sur le graphe de benchmark).

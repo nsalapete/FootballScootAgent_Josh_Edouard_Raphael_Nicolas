@@ -136,7 +136,12 @@ feed (RSS / GDELT JSON) -> new URL? -> small LLM extraction {player, club, quote
 reliability = `(confirmed + 5 × prior) / (decided + 5)`, decided = confirmed + contradicted + expired, prior = global
 confirmation rate (0.5 when nothing is decided). The raw values stay visible (`extraction_confidence`,
 `source_reliability`). Why smoothing: a source with 1 confirmed rumour out of 1 is not 100 % reliable; a large
-source converges to its own rate. Why at read time: it follows A's confirmation job with no stored score to sync.
+source converges to its own rate. Intuition for the jury: the formula is the mean of a Beta posterior, i.e. every
+source starts with 5 imaginary decided rumours at the global rate. 5 is a tunable choice: roughly how many decided
+rumours a source needs before its own record outweighs the global rate. A rumour reported by several sources takes
+the reliability of its **best** source (`sources_count` shows how many). Known bias: an `expired` rumour counts as
+not confirmed, so a source is penalised for a move that may happen after the window.
+Why at read time: it follows A's confirmation job with no stored score to sync.
 Cost: two small aggregate queries per `for_player` call (one over the decided rumours, one per source cited).
 
 | Alternative | Why rejected |
@@ -177,13 +182,35 @@ the model. Three guardrails show up in one trace.
 
 ## Likely questions
 
+- *Can a wrong figure still get through?* Yes, if the tool result itself is wrong, and we found a real case.
+  A generated query joined `PLAYS_IN` (one relationship per season) without the season, so every transfer was
+  counted 6 times: "300 M across 12 transfers" instead of 50 M across 2. The verifier accepted it, because those
+  numbers were in the tool result: it checks that figures come from the graph, not that the query was right.
+  Fixes:
+  - the schema hint warns about the per-season relationship;
+  - the planner is sent to `club_pipeline`, which computes this correctly and is tested;
+  - the honest limit stays in `docs/guardrails.md`.
+
 - *Can a string literal fool the validator?* No: strings and comments are blanked before any rule runs
   (`test_accepted_queries` contains `'DROP; CREATE (x) DETACH DELETE'` inside a string).
 - *Why refuse `LIMIT $limit`?* The validator cannot know the value statically; a literal is checkable.
 - *Why max 6 hops?* The teammate graph has a small diameter; beyond 6 the number of paths explodes, and the
   fixture shows a 7-hop pair is correctly unreachable.
 - *Is a computed fact (PageRank, similarity) a prediction?* No: it is derived from facts, so `verified`
-  (computed). Only `PREDICTED_MOVE`/`PREDICTED_LINK` are predictions.
+  (computed). Only `PREDICTED_MOVE`/`PREDICTED_LINK` are predictions. Know what they mean:
+  - PageRank on `SENDS_TO` (seller to buyer) marks clubs that **receive** players from other central clubs, not
+    big sellers: on the mini graph SC Alvorada sells the most and ranks 7th of 8.
+  - Similarity is FastRP on the teammate graph: "similar" means shared teammate circles, not the same position.
+    The tool descriptions say so, so the planner does not over-read them.
+- *What does the agent say about predictions?* `predicted_moves` returns C's hypotheses, tagged `predicted`. A
+  probability is the chance that the player's **current club** sends a player to that destination within 2
+  seasons (`basis: club_pair`, `horizon_seasons: 2`), the same for every player of the club. The tool description
+  forbids phrasing it as "X will join Y", the evaluation checks it (q30), and the verifier forces the claim's
+  nature from the `PREDICTED_MOVE:` evidence. C's model: test AUC-PR 0.166 against 0.126 for the baseline.
+- *Can the agent run PageRank itself?* No. GDS procedures are refused by the validator (they need a named
+  projection that `refresh` drops); the agent reads the stored scores through `club_hubs` / `transfer_gateways`.
+- *What does a user see if a question takes too long?* nginx times out at 120 s. LLM calls have timeouts
+  (30 s / 60 s) and the planner stops calling tools after 60 s, then the writer answers with what it has.
 - *What if a service is not implemented yet?* The tool returns an error, the trace shows it, the answer says it
   could not find verifiable information.
 - *Can a confirmed rumour become a fact?* No: the fact is the Transfermarkt `Transfer`; the rumour only points to
@@ -200,7 +227,7 @@ the model. Three guardrails show up in one trace.
   `type/…` branch name for the whole team.
 - Tuesday 20/10: D4 (rumour reads and import, PR #19), D5 (source reliability, PR #20) merged, CI green.
   Checked every agent tool against the real services of B and C on the mini graph: all answer correctly
-  (`predicted_moves` of C still raises `NotImplementedError` and is traced as a failed call).
+  (`predicted_moves` of C still raised `NotImplementedError` that day; C implemented it in #27).
   Reviewed A's PRs #13–#16 (2 comments each: DuckDB pre-filter, Decimal NaN, loans in `SENDS_TO`, stale
   `PLAYED_WITH`, loan false positives, pruned transfers vs `CONFIRMED_BY`, confirmation window tolerance,
   pending rumours beyond the batch limit).

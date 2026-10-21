@@ -106,7 +106,7 @@ require `X-API-Key`. Full examples with real outputs for each route:
 | `GET /api/players/{id}`, `GET /api/players/{id}/valuations` | One player; market-value history | B |
 | `GET /api/players/path?from=&to=` | Shortest chain of teammates (6 hops at most) | B |
 | `GET /api/clubs/{id}/pipeline` | Where a club sells its players, by destination competition | B |
-| `GET /api/clubs/hubs`, `GET /api/network/communities` | PageRank hubs, Louvain communities | C |
+| `GET /api/clubs/hubs`, `GET /api/clubs/gateways`, `GET /api/network/communities` | PageRank hubs, betweenness gateways, Louvain communities | C |
 | `GET /api/players/{id}/similar`, `GET /api/players/{id}/predicted-moves` | FastRP neighbours; predicted destinations | C |
 | `POST /api/admin/gds/refresh` 🔑 | Recompute the projections and algorithms | C |
 | `GET /api/players/{id}/rumours` | Press rumours with source, status and confidence | D |
@@ -124,8 +124,9 @@ curl -X POST "$BASE/api/agent/ask" -H "Content-Type: application/json" \
 
 ## Architecture and performance
 
-Owner: B. Details in [`docs/architecture.md`](docs/architecture.md) (diagram: `docs/architecture.drawio`) and
-[`docs/perf.md`](docs/perf.md).
+Owner: B. Details in [`docs/architecture.md`](docs/architecture.md) (diagram:
+[`docs/architecture.drawio`](docs/architecture.drawio)), [`docs/perf.md`](docs/perf.md) and
+[`docs/decisions/b.md`](docs/decisions/b.md).
 
 - **Docker Compose stack.** Four services:
   - `proxy` (nginx), the only published port (80);
@@ -143,8 +144,8 @@ Owner: B. Details in [`docs/architecture.md`](docs/architecture.md) (diagram: `d
   - `X-API-Key` is compared in constant time.
   - Secrets live only in `.env`.
 - **Published image.** Each push on `main` publishes the API image to GHCR (`latest`, `sha-<commit>`, `v1.0`).
-- **Performance.** Measured on a synthetic graph of 50,000 players and 774,000 relationships:
-  - every service method answers in under 35 ms at p50 and 70 ms at p95;
+- **Performance.** Measured on a synthetic graph of 50,000 players and 890,000 relationships:
+  - every method of B's services answers in under 21 ms at p50 and 40 ms at p95;
   - every query starts from a uniqueness constraint or an index;
   - `docs/perf.md` shows `PROFILE` plans before and after the indexes, cursor against `SKIP` pagination, and
     bounded against unbounded shortest paths.
@@ -153,14 +154,16 @@ Owner: B. Details in [`docs/architecture.md`](docs/architecture.md) (diagram: `d
 
 Owner: A. The schema contract is [`docs/schema.md`](docs/schema.md) (constraints and indexes:
 `scripts/constraints.cypher`). The modeling rationale, data sources and anti-genericity appendix are in
-[`docs/modeling.md`](docs/modeling.md) (diagram: `docs/schema.drawio`).
+[`docs/modeling.md`](docs/modeling.md) (diagram: [`docs/schema.drawio`](docs/schema.drawio), open it in
+[draw.io](https://app.diagrams.net)).
 
 ```
 (:Player)-[:MADE]->(:Transfer)-[:FROM|TO]->(:Club)-[:PLAYS_IN {season}]->(:Competition)-[:IN_COUNTRY]->(:Country)
 (:Player)-[:PLAYS_FOR]->(:Club)   (:Player)-[:HAS_VALUATION]->(:Valuation)   (:Player)-[:CITIZEN_OF]->(:Country)
 (:Player)-[:PLAYED_WITH {matches}]-(:Player)            (:Club)-[:SENDS_TO {count, total_fee_eur}]->(:Club)
 (:Article)-[:REPORTS]->(:Rumour)-[:ABOUT]->(:Player)    (:Rumour)-[:TARGET]->(:Club)   (:Rumour)-[:CONFIRMED_BY]->(:Transfer)
-(:Player)-[:PREDICTED_MOVE {prob}]->(:Club)             (:Club)-[:PREDICTED_LINK {prob}]->(:Club)
+(:Player)-[:PREDICTED_MOVE {prob, model_version, horizon_seasons, trained_until}]->(:Club)
+(:Club)-[:PREDICTED_LINK {prob, model_version, horizon_seasons, trained_until}]->(:Club)
 ```
 
 Key choices:
@@ -183,22 +186,29 @@ Decisions: [`docs/decisions/a.md`](docs/decisions/a.md).
 
 ## Graph data science and link prediction
 
-Owner: C. Details in [`docs/ml_report.md`](docs/ml_report.md) and the notebook [`demo.ipynb`](demo.ipynb).
+Owner: C. Details in [`docs/ml_report.md`](docs/ml_report.md), the notebook [`demo.ipynb`](demo.ipynb) and
+[`docs/decisions/c.md`](docs/decisions/c.md).
 
 **GDS** (`app/services/gds.py`) projects the club network and the teammate network, then runs:
-- weighted PageRank on `SENDS_TO`, for transfer hubs;
+- weighted PageRank on `SENDS_TO`, for transfer hubs: a high score marks a club that **receives** players from
+  other central clubs, not the biggest seller;
+- betweenness on `SENDS_TO`, for gateways: clubs that sit on many seller-to-buyer routes;
 - Louvain, for communities of clubs (transfer pipelines);
-- FastRP, for player embeddings and the "similar players" route.
+- FastRP on `PLAYED_WITH`, for player embeddings: "similar" means shared teammate circles, not the same position.
 
-The scores are written back to the nodes, so reads stay cheap. A full refresh takes a few seconds (`docs/perf.md`).
+The scores are written back to the nodes, so reads stay cheap. A full refresh takes about 9 s on a freshly started
+server (GDS warm-up), then under 3 s (`docs/perf.md`, synthetic graph); C measured 12.6 s on the real graph.
 
 **Link prediction** (`ml/`) asks which club pairs that never traded will trade within two seasons:
 - the protocol is temporal, so no future information leaks into training;
 - the features are common neighbours, Adamic-Adar, preferential attachment, same country and PageRank gap;
-- the chosen logistic regression reaches a test AUC-PR of 0.160 against 0.126 for the common-neighbours baseline,
-  with 31 hits in the top 100 against 3.6 expected at random.
+- the chosen logistic regression reaches a test AUC-PR of 0.166, against 0.126 for the common-neighbours baseline
+  and 0.036 at random;
+- among its 50 most probable new pairs, 17 did trade in 2023-2024, against 8 for the baseline and 1.8 at random.
 
-The predictions are written as `PREDICTED_LINK` / `PREDICTED_MOVE`, always labelled `predicted`.
+The predictions are written as `PREDICTED_LINK` / `PREDICTED_MOVE`, always labelled `predicted`. A move's
+probability is the one of the pair (player's current club, destination club) trading within two seasons: the same
+for every player of a club (`basis: "club_pair"` in the API), never "this player will join".
 
 ## Agent, guardrails and rumours
 
@@ -213,12 +223,12 @@ question → router (rules, then small model) → planner (large model + tools, 
   are caught by rules, with no LLM call. On an ambiguous name ("Gabriel"), it asks which player is meant instead
   of guessing.
 - **Tools.**
-  - The agent has ten parameterised tools, each calling a service method: `resolve_entity`, `search_players`,
-    `player_profile`, `club_pipeline`, `teammate_path`, `value_trend`, `similar_players`, `predicted_moves`,
-    `rumours` and `cypher_fallback`.
+  - The agent has twelve tools. Eleven are parameterised and each calls one service method: `resolve_entity`,
+    `search_players`, `player_profile`, `club_pipeline`, `teammate_path`, `value_trend`, `similar_players`,
+    `club_hubs`, `transfer_gateways`, `predicted_moves` and `rumours`. The twelfth is `cypher_fallback`.
   - `cypher_fallback` is the last resort. Its query must pass `CypherValidator`: read-only, schema allow-lists,
-    `LIMIT ≤ 100`, paths of 6 hops at most, a single statement, strings and comments ignored. It then runs in a
-    read transaction.
+    `LIMIT ≤ 100`, paths of 6 hops at most, a single statement, no `$parameters`, no GDS procedure, strings and
+    comments ignored. It then runs in a read transaction.
 - **Verifier.** It is deterministic. Each claim keeps its place only if:
   - its evidence ids exist in the graph and were returned by a tool;
   - every number it cites appears in a tool result;
@@ -278,12 +288,12 @@ nginx/  Dockerfile  docker-compose.yml  Makefile  .github/workflows/
 
 | Role | Member | Scope | Commits (`git shortlog -sn --no-merges main`) | Merged PRs |
 | --- | --- | --- | ---: | --- |
-| A · data, lead | Raphael Hazan ([@raphaelhazan](https://github.com/raphaelhazan)) | schema, ingestion, data quality, rumour confirmation, CI | 12 | #13, #14, #15, #16, #32 |
-| B · API, Docker | Nicolas Salapete ([@nsalapete](https://github.com/nsalapete)) | API, services, Docker, nginx, image publishing, benchmarks | 27 | #5, #6, #7, #8, #9, #17, #18, #33, #34 |
-| C · GDS, ML | Edouard Souied ([@edouard-sd](https://github.com/edouard-sd)) | GDS algorithms, link prediction, notebook | 17 | #10, #11, #12, #23, #25, #27, #28, #29 |
-| D · agent, rumours | Josh Soussan ([@joshsssn](https://github.com/joshsssn)) | LLM client, LangGraph agent, guardrails, rumours, evaluation, README | 22 | #1, #2, #3, #4, #19, #20, #21, #22, #24, #26, #30, #31, #35 |
+| A · data, lead | Raphael Hazan ([@raphaelhazan](https://github.com/raphaelhazan)) | schema, ingestion, data quality, rumour confirmation, CI | 18 | #13, #14, #15, #16, #32 |
+| B · API, Docker | Nicolas Salapete ([@nsalapete](https://github.com/nsalapete)) | API, services, Docker, nginx, image publishing, benchmarks | 35 | #5, #6, #7, #8, #9, #17, #18, #33, #34, #44 |
+| C · GDS, ML | Edouard Souied ([@edouard-sd](https://github.com/edouard-sd)) | GDS algorithms, link prediction, notebook | 25 | #10, #11, #12, #23, #25, #27, #28, #29, #38, #40, #41, #42, #43 |
+| D · agent, rumours | Josh Soussan ([@joshsssn](https://github.com/joshsssn)) | LLM client, LangGraph agent, guardrails, rumours, evaluation, README | 27 | #1, #2, #3, #4, #19, #20, #21, #22, #24, #26, #30, #31, #35, #36, #37, #39, #45, #46 |
 
-Counts as of 21/10/2026, merge commits excluded. Josh's count includes the shared project skeleton, and Nicolas's
+Counts as of 21/10/2026 evening, merge commits excluded; refreshed again before the `v1.0` tag. Josh's count includes the shared project skeleton, and Nicolas's
 the initial commit.
 
 License: [MIT](LICENSE).

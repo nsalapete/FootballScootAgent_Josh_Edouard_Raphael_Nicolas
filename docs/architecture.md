@@ -82,8 +82,8 @@ requête HTTP
    en HTTPS. Chaque affirmation est étiquetée `verified`, `predicted` ou `rumour` avec ses preuves `Label:id`.
 3. **Import de rumeurs** (`POST /api/rumours/import`, clé d'API) : flux RSS → extraction par le LLM → nœuds
    `Article` et `Rumour` ; `scripts.confirm_rumours` les confirme ensuite face aux vrais transferts.
-4. **Recalcul GDS** (`POST /api/admin/gds/refresh`, clé d'API) : projections en mémoire, PageRank, Louvain, FastRP,
-   écrits sur les nœuds (`pagerank`, `community_id`, `embedding`) pour que les lectures restent simples.
+4. **Recalcul GDS** (`POST /api/admin/gds/refresh`, clé d'API) : projections en mémoire, PageRank, Louvain, betweenness, FastRP,
+   écrits sur les nœuds (`pagerank`, `community_id`, `betweenness`, `embedding`) pour que les lectures restent simples.
 5. **Ingestion** (`ingest` ou `make seed`) : DuckDB Transfermarkt (lecture seule) → contraintes et index → nœuds
    puis relations par lots (`MERGE`, idempotent) → relations dérivées `PLAYED_WITH` et `SENDS_TO`.
 6. **CI/CD** : à chaque PR, `lint` (pylint ≥ 9,5) et `tests` (pytest contre un Neo4j de service sur 7688,
@@ -192,10 +192,12 @@ curl "$BASE/api/clubs/7/pipeline?since=2022-08-01&limit=10"
 
 ```bash
 curl "$BASE/api/clubs/hubs?limit=10"                 # clubs triés par PageRank pondéré sur SENDS_TO
+curl "$BASE/api/clubs/gateways?limit=10"             # clubs passerelles entre marchés : betweenness sur SENDS_TO
 curl "$BASE/api/network/communities?min_size=2"      # communautés Louvain de clubs (filières)
 curl "$BASE/api/players/8/similar?k=5"               # voisins par embedding FastRP
 curl "$BASE/api/players/9/predicted-moves?limit=5"   # destinations prédites : hypothèses, nature "predicted"
-# Ces routes lisent les scores écrits par le recalcul GDS : listes vides tant qu'il n'a pas tourné.
+# hubs, gateways, communities et similar lisent les scores écrits par le recalcul GDS (listes vides avant le premier) ;
+# predicted-moves lit les prédictions écrites par `python -m ml.train_link_prediction`.
 curl -X POST "$BASE/api/admin/gds/refresh" -H "X-API-Key: $API_KEY"
 # 200 rapport {"projections":[...],"algorithms":[...],"duration_s":...}
 # 401 {"detail":"Clé d'API absente ou invalide (en-tête X-API-Key)"} sans la clé

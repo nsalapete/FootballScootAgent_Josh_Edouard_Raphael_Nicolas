@@ -119,3 +119,17 @@ Findings that shape the ingestion:
   graph (2024 article, no transfer) into `expired` and break D's tests. A test checks r1 and r2 stay as they are.
 - **Real graph** (no rumour imported yet): a demo rumour "Mbappé to Real Madrid" dated 2024-02-15 was confirmed by the
   PSG -> Real Madrid transfer of 2024-07-01 (day 137), then deleted.
+
+## A5 · modeling documentation (`docs/modeling.md`, `docs/schema.drawio`)
+
+- **Language**: `docs/modeling.md` is in English like the rest of role A's docs; `docs/schema.md` stays in French
+  (team contract, only a pointer to the new files was added).
+- **Diagram**: hand-written draw.io XML (`docs/schema.drawio`, same style as `docs/architecture.drawio`) and the same
+  content in a Mermaid `flowchart` (GitHub renders it), with the three levels of truth as colours and line styles.
+- **Anti-genericity prompt**: given in English (the language of the docs): "Neo4j graph of football transfers and
+  a recruitment agent. Propose a graph schema for this.", to a sub-agent without tools or repository access. Its
+  answer is quoted verbatim as a block quote, so its headings do not mix with the outline of the document.
+- **Claims checked on the data** before writing the comparison: `players.agent_name` (65% of current players) and
+  `contract_expiration_date` (77%) are current snapshots, `clubs.coach_name` covers 403 of 796 clubs, `appearances`
+  has goals, assists and minutes but no xG.
+- **License** read from the upstream repository (CC0-1.0, data current to 6 July 2026), not from memory.

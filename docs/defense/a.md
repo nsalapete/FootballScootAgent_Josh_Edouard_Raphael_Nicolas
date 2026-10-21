@@ -3,7 +3,7 @@
 Goal: defend every line of role A without having written it. One-line choices are in `docs/decisions/a.md`;
 this sheet gives the why, the rejected alternatives, the cost and the likely questions.
 
-## 1. What is delivered (sessions 1 and 2: Monday 19 and Tuesday 20)
+## 1. What is delivered (sessions 1 to 3: Monday 19 to Wednesday 21)
 
 | Task | Content | Files |
 | --- | --- | --- |
@@ -11,8 +11,9 @@ this sheet gives the why, the rejected alternatives, the cost and the likely que
 | A2 | Derived relationships at the end of the ingestion: `PLAYED_WITH` (aggregated in DuckDB), `SENDS_TO` (aggregated in Cypher) | same files |
 | A3 | Data quality: loan rule, placeholders, duplicates, future transfers, pruning, report | `scripts/data_quality.py`, `tests/test_a_quality.py` |
 | A4 | Rumour confirmation job: `confirmed` / `contradicted` / `expired`, `CONFIRMED_BY` | `scripts/confirm_rumours.py`, `tests/test_a_rumours.py` |
+| A5 | Modeling rationale, rejected alternatives, schema diagram, data sources, anti-genericity appendix | `docs/modeling.md`, `docs/schema.drawio` |
 
-Still to do: A5 (`docs/modeling.md`, schema diagram, data sources), then the reviews and the presentation.
+Still to do (Thursday 22): reviews of B's pull requests, check `main` (CI, `make seed`), presentation.
 
 ## 2. The pipeline in one picture
 
@@ -177,7 +178,25 @@ Two figures worth knowing for the defense:
   they are in the graph but not in the per-competition pipeline of B (measured before A3).
 - Sanity check: `shortestPath` between Messi and Cristiano Ronaldo is 2 hops (both played with Arthur Melo).
 
-## 12. Likely questions
+## 12. The anti-genericity check (A5)
+
+A sub-agent with no access to the project received one sentence ("Neo4j graph of football transfers and a
+recruitment agent. Propose a graph schema") and its answer is in `docs/modeling.md`, appendix, compared line by line.
+What to remember:
+
+- **Same as any model would do**: `Transfer` as a node, a season on the club-league relationship, an aggregated
+  club-to-club edge (`TRADES_WITH` there, `SENDS_TO` here), uniqueness constraints on the ids.
+- **What only we have**: the three levels of truth (`Rumour`, `PREDICTED_*`, `CONFIRMED_BY`) and the teammate
+  network `PLAYED_WITH`. These are the two things the agent is built on.
+- **What it has and we do not, and why**: `Agent`, `Contract`, `Coach`, `SeasonStats` with xG. The data has no agent
+  per transfer, no wages, no xG, and the agent name, contract end and coach are current snapshots only. Each element
+  of our schema is backed by a column we load.
+- **What we reject on purpose**: a `Season` node (supernode, a range index does better), a `Position` node (four
+  values, thousands of edges each), stored `SIMILAR_TO` edges (embedding + cosine on demand), the agent writing
+  `CANDIDATE` edges (our agent is read-only: an LLM output never becomes data).
+- **What we would add next** (add-only): `Player.contract_expiration_date`, and per-season minutes and goals.
+
+## 13. Likely questions
 
 - **Is the ingestion idempotent?** Yes: `MERGE` on unique keys, `SET` for properties, outdated `PLAYS_FOR` /
   `CITIZEN_OF` replaced, `SENDS_TO` rebuilt per club. A test runs it twice and compares every count; a second run on
@@ -197,3 +216,16 @@ Two figures worth knowing for the defense:
 - **What if a rumour cites the right club but the move is a loan?** It is confirmed: the reported deal happened.
 - **Why 180 and 365 days?** Given by the team contract: one transfer window and a half for the deal, one year
   before a rumour is considered dead.
+- **Why is the transfer not a relationship, when it is simpler?** Three ends (player, origin, destination) and a
+  rumour must point to it; see `docs/modeling.md` 2.1. The extra hop is constant (three relationships per transfer),
+  and the frequent club-to-club questions use `SENDS_TO` instead.
+- **Is `SENDS_TO` not redundant with `Transfer`?** It is, on purpose: it is a cache rebuilt from `Transfer` at each
+  ingestion, never written by hand, so it cannot drift. It turns PageRank, communities and "who sells to whom" into
+  one hop, and makes the GDS projection a native one.
+- **Why not a `Season` node?** About 3,000 transfers per season would hang on each node, and "since 2022" is a range
+  on `Transfer(date)`, which the index answers without any hop.
+- **Where does the data come from, can you use it?** transfermarkt-datasets (David Cariboo), CC0-1.0, scraped from
+  Transfermarkt, current to 6 July 2026; press from the Guardian and BBC RSS feeds and GDELT, of which we keep only
+  URL, title, date and one quoted sentence.
+- **What did the generic schema get right that you missed?** The contract end date: it is in the file and would help
+  "players whose contract ends soon". Not added for lack of time; it is an add-only change.

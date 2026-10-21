@@ -95,3 +95,10 @@ One line per choice not settled by `CLAUDE.md`, in the order it was made.
 - **C1 · warm refresh**: a second refresh on the full graph takes 1.8 s (project clubs 0.23 s, PageRank 0.24 s,
   Louvain 0.58 s, project teammates 0.27 s, FastRP 0.43 s); the 12.6 s first run pays the GDS warm-up of a fresh JVM.
   `similar_players` warm: p50 92 ms, p95 195 ms.
+- **Bonus · betweenness of gateway clubs**: unweighted betweenness on directed `SENDS_TO`, written as
+  `Club.betweenness` by `refresh` (a property addition, to be listed in `docs/schema.md` by A) and read by the new
+  `GdsService.gateways` / `GET /api/clubs/gateways`. Computed in `refresh` rather than on demand, so that a public
+  route never starts a projection. A weight would be read as a distance by GDS, hence unweighted. Full graph: 0.66 s;
+  top gateways Genoa, Udinese, Benfica, Boavista, Famalicão (Portuguese and Italian clubs that bridge markets).
+- **Bonus · GDS routes tested end to end** on the mini graph after `refresh`: `/players/{id}/similar`,
+  `/clubs/gateways`, `/clubs/hubs`, `/network/communities` (200, sizes, the player excluded from its neighbours, 422).

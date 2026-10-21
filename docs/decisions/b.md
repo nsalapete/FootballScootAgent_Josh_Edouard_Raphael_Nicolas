@@ -78,3 +78,19 @@ Une ligne par choix non tranché par `CLAUDE.md`, dans l'ordre où il a été pr
 - **B6 · exemples `curl`** : exécutés sur le mini-graphe (ids fictifs, réponses copiées telles quelles) plutôt que des
   ids Transfermarkt non vérifiables sans le fichier DuckDB ; pour l'agent et le recalcul GDS, forme de la réponse
   seulement, signalée comme telle.
+- **B7 · tri de `search` servi par l'index** : la clé de tri `coalesce(market_value_eur, -1)` obligeait à lire tous les
+  joueurs à chaque page (curseur ou non). Les joueurs valorisés sont maintenant lus dans l'ordre de l'index
+  `Player(market_value_eur)` (`ORDER BY p.market_value_eur DESC, p.player_id`, curseur = prédicat de plage
+  `<= $cursor_value` + départage), et une seconde requête, lancée seulement quand ils sont épuisés (et jamais avec un
+  budget), lit les joueurs sans valeur par id. Même ordre et même format de curseur qu'avant : rien ne change pour D.
+- **B7 · graphe synthétique** (`scripts/bench_data.py`) : 50 000 joueurs, 220 000 `PLAYED_WITH`, 80 000 transferts,
+  graine fixe ; les clubs de divisions inférieures forment une chaîne non reliée aux championnats, pour avoir des
+  paires lointaines et des paires sans chemin (les cas coûteux d'un plus court chemin). Le script vide la base cible :
+  il refuse les ports 7687 (application) et 7688 (tests).
+- **B7 · mesures** : latence = temps mur de l'appel Python (pilote, Neo4j, Pydantic), 3 appels d'échauffement puis 30
+  mesures, p50 et p95 ; `PROFILE` sur les requêtes **exactes** des services, capturées pendant l'appel par une
+  sous-classe de `Neo4jClient` (`scripts/benchmark.py`) : aucune requête recopiée à la main.
+- **B7 · expériences d'index** : l'index est supprimé (`DROP INDEX ... IF EXISTS`), la requête profilée, puis l'index
+  recréé à partir de **sa** ligne de `scripts/constraints.cypher` et attendu (`db.awaitIndexes`) dans un `finally`.
+- **B7 · base de benchmark avec GDS** (`make bench-db`) : pour mesurer aussi le recalcul GDS étape par étape et
+  `similar_players`, promis à C en relecture.

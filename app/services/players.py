@@ -36,22 +36,39 @@ _SEARCH_FILTERS = {
         "(:Competition {competition_id: $competition_id}) }"
     ),
 }
-# Keyset condition: strictly after the last row of the previous page in (value DESC, player_id ASC) order.
-# Players without a market value sort last (value key -1).
-_CURSOR_FILTER = (
-    "(coalesce(p.market_value_eur, -1) < $cursor_value"
-    " OR (coalesce(p.market_value_eur, -1) = $cursor_value AND p.player_id > $cursor_id))"
+# Keyset pagination in (market value DESC, player_id ASC) order, players without a value last (value key -1).
+# Valued players are read from the `market_value_eur` index in index order, so a page costs about `limit` index
+# entries whatever its depth (a sort key computed with `coalesce` would force a scan of every player on every
+# page). The query for players without a value only runs once the valued ones are exhausted.
+MISSING_VALUE = -1
+# Strictly after the cursor (v, id) among valued players: a range the index can seek, plus the tie-break on id.
+_VALUED_AFTER_CURSOR = (
+    "p.market_value_eur <= $cursor_value AND (p.market_value_eur < $cursor_value OR p.player_id > $cursor_id)"
 )
-_SEARCH_MATCH = "MATCH (p:Player) WHERE "
-_SEARCH_RETURN = """
-WITH p, coalesce(p.market_value_eur, -1) AS value_key
-ORDER BY value_key DESC, p.player_id ASC
+_UNVALUED_AFTER_CURSOR = "p.player_id > $cursor_id"
+_SEARCH_VALUED = """
+MATCH (p:Player)
+WHERE p.market_value_eur IS NOT NULL AND __FILTERS__
+WITH p
+ORDER BY p.market_value_eur DESC, p.player_id ASC
 LIMIT $limit
 OPTIONAL MATCH (p)-[:PLAYS_FOR]->(club:Club)
 RETURN p.player_id AS player_id, p.name AS name, p.position AS position, p.sub_position AS sub_position,
        p.date_of_birth AS date_of_birth, p.market_value_eur AS market_value_eur,
-       club.club_id AS club_id, club.name AS club_name, value_key
+       club.club_id AS club_id, club.name AS club_name, p.market_value_eur AS value_key
 ORDER BY value_key DESC, player_id ASC
+"""
+_SEARCH_UNVALUED = """
+MATCH (p:Player)
+WHERE p.market_value_eur IS NULL AND __FILTERS__
+WITH p
+ORDER BY p.player_id ASC
+LIMIT $limit
+OPTIONAL MATCH (p)-[:PLAYS_FOR]->(club:Club)
+RETURN p.player_id AS player_id, p.name AS name, p.position AS position, p.sub_position AS sub_position,
+       p.date_of_birth AS date_of_birth, p.market_value_eur AS market_value_eur,
+       club.club_id AS club_id, club.name AS club_name, -1 AS value_key
+ORDER BY player_id ASC
 """
 
 _LATEST_SEASON = "MATCH ()-[r:PLAYS_IN]->() RETURN max(r.season) AS season"
@@ -128,6 +145,11 @@ def fulltext_query(name: str) -> str:
     return " ".join(f"{term}~1" if len(term) >= FUZZY_MIN_LENGTH else term for term in terms)
 
 
+def _with_filters(template: str, filters: list[str]) -> str:
+    """Put constant filter fragments (from this module only, never user input) into a search query."""
+    return template.replace("__FILTERS__", " AND ".join(filters) or "true")
+
+
 def _native(value: Any) -> Any:
     """Convert a Neo4j temporal value (`neo4j.time.Date`) to its Python equivalent; leave others as is."""
     return value.to_native() if hasattr(value, "to_native") else value
@@ -146,12 +168,12 @@ class PlayerService:
 
     def search(self, criteria: PlayerSearch) -> Page[PlayerSummary]:
         """Players matching the criteria, sorted by market value then id, keyset-paginated."""
-        params: dict[str, Any] = {"limit": criteria.limit + 1}
-        clauses = []
+        params: dict[str, Any] = {}
+        filters = []
         for field, fragment in _SEARCH_FILTERS.items():
             value = getattr(criteria, field)
             if value is not None:
-                clauses.append(fragment)
+                filters.append(fragment)
                 params[field] = value
         if criteria.competition_id is not None:
             params["season"] = self.latest_season()
@@ -159,9 +181,17 @@ class PlayerService:
                 return Page[PlayerSummary](items=[])
         if criteria.cursor is not None:
             params["cursor_value"], params["cursor_id"] = decode_cursor(criteria.cursor)
-            clauses.append(_CURSOR_FILTER)
-        query = _SEARCH_MATCH + (" AND ".join(clauses) or "true") + _SEARCH_RETURN
-        rows = self.client.read(query, params)
+        wanted = criteria.limit + 1  # one row more than the page tells whether a next page exists
+        rows: list[Record] = []
+        valued_phase = criteria.cursor is None or params["cursor_value"] > MISSING_VALUE
+        if valued_phase:
+            cursor = [_VALUED_AFTER_CURSOR] if criteria.cursor is not None else []
+            rows = self.client.read(_with_filters(_SEARCH_VALUED, filters + cursor), {**params, "limit": wanted})
+        # A budget excludes unknown values, so the second query is only useful without `max_value_eur`.
+        if len(rows) < wanted and criteria.max_value_eur is None:
+            cursor = [] if valued_phase else [_UNVALUED_AFTER_CURSOR]
+            query = _with_filters(_SEARCH_UNVALUED, filters + cursor)
+            rows += self.client.read(query, {**params, "limit": wanted - len(rows)})
         page, extra = rows[: criteria.limit], rows[criteria.limit :]
         next_cursor = encode_cursor(page[-1]["value_key"], page[-1]["player_id"]) if extra else None
         return Page[PlayerSummary](items=[_summary(row) for row in page], next_cursor=next_cursor)

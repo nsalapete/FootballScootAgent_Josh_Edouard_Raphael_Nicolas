@@ -175,12 +175,15 @@ def test_import_creates_pending_rumours(test_nodes):
     assert report.articles_seen == 3 and report.articles_new == 3
     assert report.rumours_created == 1  # the second article reinforces the pending rumour
     assert report.unresolved_names == 1  # "Zorblat" is ambiguous: counted, not guessed
+    assert report.unresolved_examples == ["Zorblat"]
     assert report.rejected_quotes == 1  # the quote is not in the article
 
     rumours = service.for_player(-4101)
     assert len(rumours) == 1
     rumour = rumours[0]
-    assert rumour.status == "pending" and rumour.club_id == -4201 and rumour.extraction_confidence == 0.4
+    # The second, firmer article (0.8) raised the confidence of the pending rumour and brought its quote.
+    assert rumour.status == "pending" and rumour.club_id == -4201 and rumour.extraction_confidence == 0.8
+    assert rumour.quote == "have agreed terms with Zorblat Quenterio" and rumour.sources_count == 1
     assert rumour.url == "https://test-d.example/2" and rumour.published_at == date(2026, 10, 15)
     assert rumour.nature == "rumour"
     reports = test_nodes.read(

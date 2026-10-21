@@ -131,3 +131,38 @@ def test_failed_hypothesis_tools_keep_their_nature():
     assert rumour.error and rumour.nature == "rumour"
     assert tools.run("cypher_fallback", {"query": "MATCH (n) DELETE n"}).nature == "verified"
     assert tools.run("unknown_tool", {}).nature == "verified"
+
+
+MULTI_SOURCE = """
+CREATE (p:Player {player_id: -4302, name: 'Testd Multi Source'}), (c:Club {club_id: -4402, name: 'Testd Club Two'})
+CREATE (r:Rumour {rumour_id: 'test-d-m1', status: 'pending', confidence: 0.5, quote: 'q'})
+CREATE (r)-[:ABOUT]->(p), (r)-[:TARGET]->(c)
+WITH r
+UNWIND [{source: 'test-d-good', day: 1}, {source: 'test-d-bad', day: 2}] AS row
+CREATE (a:Article {url: 'https://test-d.example/rel/m-' + row.source, source: row.source, title: 'm',
+                   published_at: date('2026-02-01') + duration({days: row.day})})
+CREATE (a)-[:REPORTS]->(r)
+"""
+MULTI_CLEANUP = """
+MATCH (n) WHERE (n:Rumour AND n.rumour_id = 'test-d-m1') OR (n:Article AND n.url STARTS WITH 'https://test-d.example/rel/m-')
+   OR (n:Player AND n.player_id = -4302) OR (n:Club AND n.club_id = -4402)
+DETACH DELETE n
+"""
+
+
+@pytest.mark.neo4j
+def test_a_rumour_is_as_credible_as_its_best_source(neo4j_db):
+    neo4j_db.write(CLEANUP)
+    neo4j_db.write(MULTI_CLEANUP)
+    neo4j_db.write(SETUP)
+    neo4j_db.write(MULTI_SOURCE)
+    try:
+        service = RumourService(neo4j_db)
+        [rumour] = service.for_player(-4302)
+        reliability = service.source_reliability(["test-d-good", "test-d-bad"])
+        assert rumour.source == "test-d-bad"  # the newest article
+        assert rumour.sources_count == 2
+        assert rumour.source_reliability == pytest.approx(reliability["test-d-good"], abs=1e-3)
+    finally:
+        neo4j_db.write(MULTI_CLEANUP)
+        neo4j_db.write(CLEANUP)

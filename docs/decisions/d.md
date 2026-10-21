@@ -39,3 +39,4 @@ One line per choice that the shared rules did not settle.
 - C's review: the nature of a generated query ignores string literals and is kept on rejected queries; tool natures come from `TOOL_NATURES` on success and failure.
 - C's review: only dates and times are read as text by the verifier; whole numbers below 10,000 (years, ages, counts) must match exactly, the 1 % tolerance is for amounts and decimals.
 - C's review: planning stops after 60 s (then the writer answers), to stay under the 120 s proxy timeout; `AGENT_REQUIRE_API_KEY` is read through a small settings class, so `make run` sees it in `.env` too.
+- C's review (rumours): a firmer article on a pending rumour raises its confidence and brings its quote; a rumour is as credible as its best source (`sources_count` shown); the extraction asks for the club's full official name ("Spurs" -> "Tottenham Hotspur"); up to 20 unresolved names are listed in the import report.

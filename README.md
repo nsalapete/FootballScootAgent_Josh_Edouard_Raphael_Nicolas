@@ -8,8 +8,8 @@ A Neo4j knowledge graph of European football transfers (Transfermarkt, 7 leagues
 of it, graph data science and link prediction, and a **LangGraph recruitment agent**.
 Graph Databases project, AIDAMS 3rd year, level 3+ (agentic / GraphRAG).
 
-The agent answers questions such as *"Which left-backs under 23 cost less than 10 M€?"*, *"Where does SC Alvorada
-sell its players?"* or *"Which club is Gabriel Rocha predicted to join?"*. Each statement in an answer is labelled
+The agent answers questions such as *"Which left-backs under 23 cost less than 10 M€?"*, *"Where does Real Madrid
+sell its players?"* or *"Which clubs is Bukayo Saka predicted to join?"*. Each statement in an answer is labelled
 with one of three **levels of truth**, which are never mixed:
 
 | Level | Comes from | Shown as |
@@ -24,6 +24,7 @@ removes any claim whose evidence or figures cannot be found in the graph.
 ## Contents
 
 - [Quick start](#quick-start)
+- [Demo interface](#demo-interface)
 - [Make commands](#make-commands)
 - [API](#api)
 - [Architecture and performance](#architecture-and-performance)
@@ -33,10 +34,24 @@ removes any claim whose evidence or figures cannot be found in the graph.
 - [Quality](#quality)
 - [Repository layout](#repository-layout)
 - [Team and contributions](#team-and-contributions)
+- [Screenshots](#screenshots)
 
 ## Quick start
 
-Requirements: Docker (with Compose), Python 3.11+, `make` (on Windows: Git Bash plus `make`, e.g.
+**Demo in one command** (Docker running, Python 3.11+, dependencies installed with `make install` or
+`pip install -r requirements.txt`):
+
+```bash
+python -m scripts.start_demo          # Windows: .venv\Scripts\python -m scripts.start_demo
+```
+
+It starts Neo4j + GDS in Docker (container `scout-neo4j-demo`, port 7690, data kept in a volume), downloads the
+Transfermarkt file if needed, loads the real graph and trains the link-prediction model the first time (about
+4 minutes, then a few seconds), recomputes the GDS scores, starts the API on the first free port from 8000 and opens
+the interface. Options: `--mini` serves the fictitious test graph instead (ready in about 40 s), `--import-rumours`
+reads press rumours first (a few cents of LLM), `--api-key`, `--port`, `--no-browser`, and `--stop` stops Neo4j.
+
+**Full stack** (Compose, nginx in front). Requirements: Docker (with Compose), Python 3.11+, `make` (on Windows: Git Bash plus `make`, e.g.
 `choco install make`), and about 2 GB of free RAM for Neo4j.
 
 ```bash
@@ -46,7 +61,7 @@ make data           # downloads the Transfermarkt DuckDB file (about 200 MB) int
 make docker-up      # proxy (:80), api, neo4j (+ GDS), ingest (loads the graph once, about 1 min 15 s)
 ```
 
-Then open Swagger at <http://localhost/docs>.
+Then open the interface at <http://localhost/ui> and Swagger at <http://localhost/docs>.
 
 **LLM settings in `.env`** (`app/llm/client.py`):
 
@@ -73,6 +88,29 @@ The published image can replace a local build:
 - `python -m scripts.confirm_rumours` confirms, contradicts or expires pending rumours against the transfers.
 - `python -m ml.train_link_prediction` trains the link-prediction model and writes the predictions.
 - `python -m scripts.import_articles` imports press rumours (spends LLM credit).
+
+## Demo interface
+
+The API serves a single-page analyst console at `/ui` (`/` redirects to it): plain JavaScript and a vendored copy
+of D3, no build step, same origin as the API. It calls every route of the API, and a test checks that it calls no
+other (`tests/test_d_ui.py`).
+
+- **Agent.** Ask a question; the answer is shown claim by claim with its truth level (`verified`, `predicted`,
+  `rumour`), the evidence ids (a click places the entity on the board), the removed claims with their reason, and
+  the tool trace. The prepared questions follow the loaded graph (real or mini) and include the traps.
+- **Board.** A D3 force graph on a pitch: players coloured by position, clubs, competitions. A teammate path plays
+  hop by hop with the number of matches played together; a club fans out its selling pipeline by league; predicted
+  moves are dashed amber, rumours dotted purple, and the legend uses the same badges as the claims.
+- **Players, Clubs, Network, Admin tabs.** Search with filters and cursor pagination, name resolution, value
+  history, similar players, predicted moves, rumours with source and confidence, PageRank hubs, betweenness
+  gateways, Louvain communities, GDS refresh and rumour import (both need the API key, kept in the tab's session
+  storage only).
+- **Deep links** for the demo: `/ui?player=342229` (Mbappé), `/ui?path=342229-418560` (Mbappé → Haaland),
+  `/ui?club=418` (Real Madrid), `/ui?tab=network`, `/ui?q=<question>&ask=1`, and `/ui?selftest=1`, which calls
+  every read route and checks the shape of each answer.
+
+API data never goes through `innerHTML`, links only open `http(s)` URLs, and only three whitelisted files are served
+under `/ui/`. Screenshots: [below](#screenshots).
 
 ## Make commands
 
@@ -143,7 +181,8 @@ Owner: B. Details in [`docs/architecture.md`](docs/architecture.md) (diagram:
   - Security headers are set.
   - `X-API-Key` is compared in constant time.
   - Secrets live only in `.env`.
-- **Published image.** Each push on `main` publishes the API image to GHCR (`latest`, `sha-<commit>`, `v1.0`).
+- **Published image.** Each push on `main` publishes the API image to GHCR (`latest`, `sha-<commit>`); the release
+  tags add `v1.0.0` and `v1.0`.
 - **Performance.** Measured on a synthetic graph of 50,000 players and 890,000 relationships:
   - every method of B's services answers in under 21 ms at p50 and 40 ms at p95;
   - every query starts from a uniqueness constraint or an index;
@@ -155,7 +194,8 @@ Owner: B. Details in [`docs/architecture.md`](docs/architecture.md) (diagram:
 Owner: A. The schema contract is [`docs/schema.md`](docs/schema.md) (constraints and indexes:
 `scripts/constraints.cypher`). The modeling rationale, data sources and anti-genericity appendix are in
 [`docs/modeling.md`](docs/modeling.md) (diagram: [`docs/schema.drawio`](docs/schema.drawio), open it in
-[draw.io](https://app.diagrams.net)).
+[draw.io](https://app.diagrams.net)). The source tables and how they map to the graph:
+[`docs/source_er_diagram.md`](docs/source_er_diagram.md) (ER diagram of the DuckDB file).
 
 ```
 (:Player)-[:MADE]->(:Transfer)-[:FROM|TO]->(:Club)-[:PLAYS_IN {season}]->(:Competition)-[:IN_COUNTRY]->(:Country)
@@ -175,7 +215,7 @@ Key choices:
 
 **Data.** [transfermarkt-datasets](https://github.com/dcaribou/transfermarkt-datasets) (CC0, DuckDB file), with the
 scope set by `SCOPE_COMPETITIONS` (`GB1, ES1, IT1, L1, FR1, PO1, NL1`) and `SCOPE_FROM_SEASON` (`2015`). Press
-articles come from the Guardian and BBC RSS feeds and the GDELT DOC API.
+articles come from the Guardian transfer-window, BBC gossip and Sky Sports transfer RSS feeds and the GDELT DOC API.
 
 **Ingestion** (`scripts/seed_data.py`, rules in `scripts/data_quality.py`):
 - idempotent, extraction in DuckDB, then `MERGE` in batches of 5,000;
@@ -254,7 +294,26 @@ question → router (rules, then small model) → planner (large model + tools, 
   Run 3 used DeepSeek as the large model, after C's review. Its two failures came from a missing `LIMIT` that the
   time budget left no turn to fix; the tool now adds it, and both questions pass.
 
-  `docs/agent_eval.md` explains what changed between the two runs. Re-run with `python -m scripts.agent_eval`.
+  `docs/agent_eval.md` explains what changed between the three runs. Re-run with `python -m scripts.agent_eval`.
+- **Checked on the real graph.** The evaluation needs known answers, so it runs on the mini graph. The agent and the
+  rumour import were then run on the real graph (17,856 players). That found seven problems the mini graph could
+  not show, all fixed with a test:
+  - the router refused *"Paris Saint-Germain"* as a betting question (`paris`), a PageRank *score* as a match score
+    and a value that *drops* as a write request: the rules now catch only unambiguous phrasings;
+  - "Benfica" or "Real Madrid" also match their U19, B and reserve teams, so the agent asked which one was meant and
+    the rumour import left most club names unresolved: first teams now win unless the question names a youth team;
+  - the full-text index finds nothing for "PSG", "Man Utd" or "Barça": a short list of nicknames is expanded first;
+  - generated queries compared dates with strings (always null): the schema given to the planner says how to
+    compare them;
+  - the club pipeline did not echo its `since` filter, so the writer could not confirm "since 2020";
+  - "similar players" (FastRP on teammates) read like a playing-style match: the writer now says what it means;
+  - the Guardian moved its transfers feed and the general BBC feed had almost no transfer news: the default feeds
+    were replaced.
+
+  With these fixes, 14 real questions in English and French (values, paths, pipelines, predictions, hubs, PSG's
+  purchases from Premier League clubs, Benfica's sales to the Premier League, and three traps) were all handled
+  correctly. The verifier removed one claim, which cited no evidence. Answers took 13 to 70 s; refusals took 2 s,
+  with no LLM call.
 
 ## Quality
 
@@ -275,12 +334,13 @@ question → router (rules, then small model) → planner (large model + tools, 
 ```
 app/
   main.py, config.py, security.py      FastAPI app, settings, API key (B)
+  static/ui/, routers/ui.py            demo interface served at /ui (D)
   database/neo4j.py                    Neo4jClient: parameterised reads and writes with a timeout (A)
   models/  routers/  services/         Pydantic models, HTTP routes, Cypher queries (one file per area)
   agent/                               LangGraph agent, tools, Cypher validator, evidence checks (D)
   llm/client.py                        chat models: anthropic, openai_compatible, fake (D)
 scripts/                               ingestion, data quality, rumour confirmation (A), benchmarks (B),
-                                       article import, agent evaluation (D)
+                                       article import, agent evaluation, one-command demo (D)
 ml/                                    link-prediction dataset and training (C)
 tests/                                 pytest, one file per role and area; fixtures/ = mini graph
 docs/                                  architecture, perf, schema, ML report, guardrails, evaluation, decisions, defense
@@ -289,14 +349,37 @@ nginx/  Dockerfile  docker-compose.yml  Makefile  .github/workflows/
 
 ## Team and contributions
 
-| Role | Member | Scope | Commits (`git shortlog -sn --no-merges main`) | Merged PRs |
-| --- | --- | --- | ---: | --- |
-| A · data, lead | Raphael Hazan ([@raphaelhazan](https://github.com/raphaelhazan)) | schema, ingestion, data quality, rumour confirmation, CI | 18 | #13, #14, #15, #16, #32 |
-| B · API, Docker | Nicolas Salapete ([@nsalapete](https://github.com/nsalapete)) | API, services, Docker, nginx, image publishing, benchmarks | 35 | #5, #6, #7, #8, #9, #17, #18, #33, #34, #44 |
-| C · GDS, ML | Edouard Souied ([@edouard-sd](https://github.com/edouard-sd)) | GDS algorithms, link prediction, notebook | 25 | #10, #11, #12, #23, #25, #27, #28, #29, #38, #40, #41, #42, #43 |
-| D · agent, rumours | Josh Soussan ([@joshsssn](https://github.com/joshsssn)) | LLM client, LangGraph agent, guardrails, rumours, evaluation, README | 27 | #1, #2, #3, #4, #19, #20, #21, #22, #24, #26, #30, #31, #35, #36, #37, #39, #45, #46 |
+| Role | Member | Scope | Commits | Share | Merged PRs |
+| --- | --- | --- | ---: | ---: | --- |
+| A · data, lead | Raphael Hazan ([@raphaelhazan](https://github.com/raphaelhazan)) | schema, ingestion, data quality, rumour confirmation, CI | 18 | 15.1 % | 5: [#13](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/13), [#14](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/14), [#15](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/15), [#16](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/16), [#32](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/32) |
+| B · API, Docker | Nicolas Salapete ([@nsalapete](https://github.com/nsalapete)) | API, services, Docker, nginx, image publishing, benchmarks | 35 | 29.4 % | 10: [#5](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/5), [#6](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/6), [#7](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/7), [#8](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/8), [#9](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/9), [#17](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/17), [#18](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/18), [#33](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/33), [#34](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/34), [#44](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/44) |
+| C · GDS, ML | Edouard Souied ([@edouard-sd](https://github.com/edouard-sd)) | GDS algorithms, link prediction, notebook | 25 | 21.0 % | 13: [#10](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/10), [#11](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/11), [#12](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/12), [#23](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/23), [#25](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/25), [#27](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/27), [#28](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/28), [#29](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/29), [#38](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/38), [#40](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/40), [#41](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/41), [#42](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/42), [#43](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/43) |
+| D · agent, rumours | Josh Soussan ([@joshsssn](https://github.com/joshsssn)) | LLM client, LangGraph agent, guardrails, rumours, evaluation, demo interface, README | 41 | 34.5 % | 20: [#1](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/1), [#2](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/2), [#3](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/3), [#4](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/4), [#19](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/19), [#20](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/20), [#21](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/21), [#22](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/22), [#24](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/24), [#26](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/26), [#30](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/30), [#31](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/31), [#35](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/35), [#36](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/36), [#37](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/37), [#39](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/39), [#45](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/45), [#46](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/46), [#47](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/47), [#48](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pull/48) |
+| **Total** | | | **119** | **100 %** | **48** |
 
-Counts as of 21/10/2026 evening, merge commits excluded; refreshed again before the `v1.0` tag. Josh's count includes the shared project skeleton, and Nicolas's
-the initial commit.
+Commits from `git shortlog -sn --no-merges main` (merge commits excluded), merged PRs from
+`gh pr list --state merged --author <login>`, both counted on 21/10/2026 for the v1.0 release. All merged PRs:
+[FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pulls?q=is:pr+is:merged](https://github.com/nsalapete/FootballScootAgent_Josh_Edouard_Raphael_Nicolas/pulls?q=is%3Apr+is%3Amerged). Josh's count includes the
+shared project skeleton, and Nicolas's the initial commit.
+
+The work is spread across the four roles: every member owns one layer end to end (data, API, graph data science,
+agent), with a commit share between 15 % and 35 % and at least five merged PRs each. Reviews follow a rota
+(A reviews B, B reviews C, C reviews D, D reviews A); the review comments on B's PRs were posted by Josh in A's
+slot.
+
+## Screenshots
+
+All on the real graph, from the demo interface unless stated.
+
+| | |
+| --- | --- |
+| ![Agent answer, claim by claim, with evidence ids](docs/screenshots/ui-agent-answer.png) | ![Teammate path Mbappé → Hakimi → Haaland](docs/screenshots/ui-path-mbappe-haaland.png) |
+| Agent: *"Which leagues does Real Madrid sell its players to?"*, 8 verified claims with their evidence | Shortest teammate chain, played hop by hop |
+| ![Real Madrid selling pipeline](docs/screenshots/ui-club-real-madrid.png) | ![Kylian Mbappé: value, similar players, predictions](docs/screenshots/ui-player-mbappe.png) |
+| Club drawer: selling pipeline by league | Player drawer: value history, similar players, predicted moves |
+| ![Network: hubs and gateways](docs/screenshots/ui-home-network.png) | ![Players search](docs/screenshots/ui-players-search.png) |
+| PageRank hubs and betweenness gateways | Players search: centre-backs under 23 |
+| ![Swagger](docs/screenshots/swagger.png) | ![Merged pull requests](docs/screenshots/github-merged-prs.png) |
+| Swagger (`/docs`) | Merged pull requests on GitHub |
 
 License: [MIT](LICENSE).

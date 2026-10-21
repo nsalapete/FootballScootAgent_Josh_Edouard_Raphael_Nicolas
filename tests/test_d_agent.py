@@ -6,7 +6,15 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from app.agent.evidence import GraphEvidence, numbers_in_text, parse_evidence
-from app.agent.graph import AgentDraft, RouteDecision, ScoutAgent, expected_nature, out_of_scope_reason, pick_match
+from app.agent.graph import (
+    AgentDraft,
+    RouteDecision,
+    ScoutAgent,
+    expected_nature,
+    is_second_team,
+    out_of_scope_reason,
+    pick_match,
+)
 from app.agent.tools import ToolBox, age_on, evidence_from_rows
 from app.llm.client import FakeChatModel, tool_call
 from app.models.agent import Claim
@@ -329,6 +337,83 @@ def test_pick_match_and_nature_rules():
     assert out_of_scope_reason("Which left-backs under 23 cost less than 10M?") is None
 
 
+@pytest.mark.parametrize(
+    "question",
+    [
+        "How many transfers did Paris Saint-Germain make to the Premier League since 2020?",
+        "Which players moved from Paris FC to Lens?",
+        "Which players from Cote d'Ivoire play in Ligue 1?",
+        "What is the PageRank score of Genoa?",
+        "When did Kylian Mbappé's market value drop?",
+        "Which clubs sell better than they buy?",
+        "Who was the best-paid transfer of Real Madrid?",
+        "What is the latest update on the rumours about Saka?",
+        "How did the value of Pedri change since 2021?",
+    ],
+)
+def test_real_questions_are_not_caught_by_the_rules(question):
+    """Found on the real graph: bare words such as `paris`, `score` or `drop` refused answerable questions."""
+    assert out_of_scope_reason(question) is None
+
+
+@pytest.mark.parametrize(
+    ("question", "topic"),
+    [
+        ("What odds would you give on Arsenal winning the league?", "Betting"),
+        ("Je veux parier sur le PSG, paris sportifs ?", "Betting"),
+        ("What will the score of Real Madrid against Barcelona be?", "Match results"),
+        ("Who will win the Champions League?", "Match results"),
+        ("Is Mbappé better than Haaland?", "Judging"),
+        ("Is Diogo Santos a good player?", "Judging"),
+        ("Remove all transfers of Neymar from the database.", "Changing"),
+        ("Set Lucas Marchand's market value to 50 million euros.", "Changing"),
+        ("Drop the index on players", "Changing"),
+        ("Update the transfer fees of Chelsea", "Changing"),
+    ],
+)
+def test_unambiguous_requests_are_still_refused_by_the_rules(question, topic):
+    assert out_of_scope_reason(question).startswith(topic)
+
+
+def test_club_nicknames_are_expanded_before_the_full_text_search():
+    """Found on the real graph: the full-text index finds nothing for "PSG"."""
+    asked = []
+
+    class RecordingClubs(FakeClubs):
+        """Records the names sent to the club index."""
+
+        def resolve(self, name, limit=5):
+            asked.append(name)
+            return super().resolve(name, limit)
+
+    tools = ToolBox(FakePlayers(), RecordingClubs(), FakeGds(), FakeRumours())
+    tools.run("resolve_entity", {"name": "PSG", "kind": "club"})
+    tools.run("resolve_entity", {"name": " Man Utd ", "kind": "club"})
+    tools.run("resolve_entity", {"name": "Alvorada", "kind": "club"})
+    assert asked == ["Paris Saint-Germain", "Manchester United", "Alvorada"]
+
+
+def test_first_team_wins_over_its_youth_and_reserve_teams():
+    """Found on the real graph: "Benfica" also matches Benfica B, U19, U23 and U17, and the agent asked which."""
+    benfica = [
+        {"kind": "club", "id": 294, "name": "SL Benfica", "score": 3.0},
+        {"kind": "club", "id": 8889, "name": "Benfica U19", "score": 3.0},
+        {"kind": "club", "id": 10330, "name": "Benfica B", "score": 3.0},
+    ]
+    assert pick_match("Benfica", benfica)["id"] == 294
+    assert pick_match("Benfica U19", benfica)["id"] == 8889
+    two_first_teams = [
+        {"kind": "club", "id": 131, "name": "FC Barcelona", "score": 3.0},
+        {"kind": "club", "id": 2, "name": "Barcelona SC", "score": 3.0},
+        {"kind": "club", "id": 3, "name": "Barcelona B", "score": 3.0},
+    ]
+    assert pick_match("Barcelona", two_first_teams) is None
+    for name in ("Ajax U19", "RM Castilla", "Jong PSV", "Man Utd U18"):
+        assert is_second_team(name), name
+    for name in ("Willem II", "SL Benfica", "Barcelona SC"):
+        assert not is_second_team(name), name
+
+
 def test_parse_evidence_and_rows():
     assert parse_evidence("Player:12") == ("Player", 12)
     assert parse_evidence("PREDICTED_MOVE:9->5") == ("PREDICTED_MOVE", (9, 5))
@@ -390,6 +475,11 @@ def test_pipeline_totals_are_computed_by_the_tool():
     tools = ToolBox(FakePlayers(), FakeClubs(), FakeGds(), FakeRumours())
     data = tools.run("club_pipeline", {"club_id": 7}).data
     assert (data["total_transfers"], data["total_fee_eur"]) == (4, 59000000)
+    assert data["since"] is None
+    # The filter is echoed back: without it the writer could not confirm "since 2020" (seen on the real graph).
+    assert tools.run("club_pipeline", {"club_id": 7, "since": "2020-01-01"}).data["since"] == "2020-01-01"
+    description = {tool.name: tool.description for tool in tools.as_langchain_tools()}["cypher_fallback"]
+    assert "date('2022-01-01')" in description
 
 
 def test_fallback_evidence_from_nested_nodes_and_notes():

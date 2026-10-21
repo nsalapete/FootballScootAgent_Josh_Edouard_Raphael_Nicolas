@@ -17,6 +17,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.agent.guardrails import CypherValidator, strip_literals
+from app.agent.names import expand_nickname
 from app.models.agent import Nature
 from app.models.players import PlayerSearch
 from app.services.clubs import ClubService
@@ -46,6 +47,8 @@ SCHEMA_HINT = (
     + "(:Rumour)-[:ABOUT]->(:Player), (:Rumour)-[:TARGET]->(:Club); "
     + "(:Player)-[:PREDICTED_MOVE {prob, model_version, horizon_seasons}]->(:Club), "
     + "(:Club)-[:PREDICTED_LINK {prob, model_version, horizon_seasons}]->(:Club) (model hypotheses). "
+    + "`date`, `date_of_birth` and `published_at` are DATE values: compare them with `date('2022-01-01')`, never "
+    + "with a string (a string comparison is always null, so no row matches); `season` is the integer start year. "
     + "Never RETURN `embedding` (64 floats per player). "
     + "There is NO `id` property: use player_id, club_id, transfer_id, competition_id, rumour_id. "
     + "Always RETURN the id column of every entity you will mention (e.g. `p.player_id AS player_id`, "
@@ -199,7 +202,8 @@ class ToolBox:
     # ---------- one method per tool (each calls one service method) ----------
 
     def resolve_entity(self, name: str, kind: str = "any") -> ToolResult:
-        """Players and/or clubs matching a name, through the full-text indexes."""
+        """Players and/or clubs matching a name, through the full-text indexes (common club nicknames first)."""
+        name = expand_nickname(name)
         matches = []
         if kind in ("player", "any"):
             matches += self.players.resolve(name, limit=5)
@@ -228,6 +232,7 @@ class ToolBox:
         evidence = [f"Club:{club_id}"] + [f"Competition:{row.competition_id}" for row in rows]
         data = {
             "club_id": club_id,
+            "since": since.isoformat() if since else None,
             "total_transfers": sum(row.transfers for row in rows),
             "total_fee_eur": sum(row.total_fee_eur for row in rows),
             "rows": [row.model_dump() for row in rows],

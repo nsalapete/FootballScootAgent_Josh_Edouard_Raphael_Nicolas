@@ -62,6 +62,24 @@ def test_name_helpers():
     assert pick_unique("Gabriel", gabriels) is None
     assert pick_unique("gabriel rocha", gabriels) == 9
     assert pick_unique("Ronaldo", gabriels) is None and pick_unique("", gabriels) is None
+    # Found on the real graph: "Real Madrid" also fits Real Madrid U19 and was left unresolved.
+    madrid = [{"id": 418, "name": "Real Madrid"}, {"id": 28870, "name": "Real Madrid U19"}]
+    assert pick_unique("Real Madrid", madrid, club=True) == 418
+    assert pick_unique("Real Madrid U19", madrid, club=True) == 28870
+    two_madrids = [{"id": 418, "name": "Real Madrid"}, {"id": 13, "name": "Atlético de Madrid"}]
+    assert pick_unique("Madrid", two_madrids, club=True) is None
+    # The extraction model writes "Liverpool Football Club"; "Arsenal" also fits Arsenal Sarandí and Arsenal Tula.
+    arsenals = [{"id": 11, "name": "Arsenal FC"}, {"id": 1, "name": "Arsenal U23"}, {"id": 2, "name": "Arsenal Sarandí"}]
+    assert pick_unique("Arsenal", arsenals, club=True) == 11
+    assert pick_unique("Arsenal Football Club", arsenals, club=True) == 11
+    assert pick_unique("Arsenal Sarandi", arsenals, club=True) == 2
+    liverpools = [
+        {"id": 31, "name": "Liverpool FC", "in_scope": True},
+        {"id": 10663, "name": "Liverpool FC", "in_scope": False},
+        {"id": 9252, "name": "Liverpool U23", "in_scope": False},
+    ]
+    assert pick_unique("Liverpool Football Club", liverpools, club=True) == 31
+    assert pick_unique("Liverpool", [dict(row, in_scope=False) for row in liverpools], club=True) is None
     assert quote_in_text("Wexley are MONITORING Santos", "News: wexley are monitoring Santos, says a source.")
     assert not quote_in_text("Wexley signed Santos", "Wexley are monitoring Santos")
     assert rumour_id_for("u", 1, 2) == rumour_id_for("u", 1, 2) != rumour_id_for("u", 1, 3)

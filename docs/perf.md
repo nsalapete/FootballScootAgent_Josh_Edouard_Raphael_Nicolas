@@ -53,14 +53,16 @@ candidat, les candidats venant de l'index de valeur, dans l'ordre.
 | Méthode | Cas | p50 (ms) | p95 (ms) | db hits | Lignes | Lecture du graphe |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `GdsService.predicted_moves` (C) | joueur de championnat | 4,0 | 7,8 | 37 | 3 | `NodeUniqueIndexSeek` |
-| `GdsService.hubs` (C) | 20 clubs | 6,3 | 9,7 | 1 221 | 20 | `NodeByLabelScan` sur 400 clubs |
-| `GdsService.communities` (C) | taille ≥ 2 | 7,8 | 12,6 | 2 001 | 8 | `NodeByLabelScan` sur 400 clubs |
-| `GdsService.similar_players` (C) | joueur au hasard | 295,0 | 549,2 | 200 004 | 10 | `NodeByLabelScan` + cosinus sur 50 000 vecteurs |
+| `GdsService.hubs` (C) | 20 clubs | 9,7 | 19,6 | 1 221 | 20 | `NodeByLabelScan` sur 400 clubs |
+| `GdsService.gateways` (C) | 20 clubs | 9,1 | 19,7 | 1 221 | 20 | `NodeByLabelScan` sur 400 clubs |
+| `GdsService.communities` (C) | taille ≥ 2 | 10,3 | 23,4 | 2 001 | 8 | `NodeByLabelScan` sur 400 clubs |
+| `GdsService.similar_players` (C) | joueur au hasard | 245,9 | 611,6 | 200 004 | 10 | `NodeByLabelScan` + cosinus sur 50 000 vecteurs |
 | `RumourService.for_player` (D) | joueur avec rumeurs | 29,8 | 64,0 | 32 896 | 7 | `NodeIndexSeek` + **`NodeByLabelScan` sur `Article`** |
 | `RumourService.for_player` (D) | rumeurs en attente | 18,8 | 25,4 | 22 714 | 5 | idem |
 | `RumourService.source_reliability` (D) | 8 sources | 28,2 | 53,6 | 82 950 | 9 | **`NodeByLabelScan` sur `Article`** pour chaque source |
 
-Non mesurées ici : `GdsService.refresh` (chronométré étape par étape en section 5) et
+Les lectures GDS sont mesurées juste après le recalcul de la section 5 (même passage, serveur redémarré, option
+`--only-gds`). Non mesurées ici : `GdsService.refresh` (chronométré étape par étape en section 5) et
 `RumourService.import_articles` (le temps dépend du réseau et du LLM, pas du graphe).
 
 Constat pour D : la fiabilité des sources (`source_reliability`, appelée aussi par `for_player`) cherche
@@ -173,34 +175,38 @@ fois : c'est lui, et la borne, qui rendent `teammate_path` sûr. (Une ligne : la
 
 ## 5. GDS (méthodes de C, mesures promises en relecture)
 
-Recalcul complet (`GdsService.refresh`) avec le client longue durée de l'API, chronométré étape par étape :
+Recalcul complet (`GdsService.refresh`, avec l'étape `Betweenness` ajoutée par C pour `gateways`) avec le client
+longue durée de l'API, chronométré étape par étape, sur un serveur tout juste redémarré
+(`docker restart scout-neo4j-bench` puis `python -m scripts.benchmark --only-gds`) :
 
 | Étape | 1er recalcul après démarrage du serveur (s) | 2e recalcul (s) |
 | --- | ---: | ---: |
-| projection clubs | 2,50 | 0,07 |
-| PageRank | 0,55 | 0,09 |
-| Louvain | 1,47 | 1,66 |
-| projection coéquipiers | 0,45 | 0,17 |
-| FastRP | 1,51 | 0,41 |
-| suppressions des projections | 0,06 | 0,02 |
-| **total** | **6,55** | **2,44** |
+| projection clubs | 2,37 | 0,11 |
+| PageRank | 0,56 | 0,15 |
+| Louvain | 2,06 | 1,48 |
+| Betweenness | 0,98 | 0,19 |
+| projection coéquipiers | 0,75 | 0,12 |
+| FastRP | 1,87 | 0,49 |
+| suppressions des projections | 0,42 | 0,02 |
+| **total** | **9,01** | **2,57** |
 
-La projection de 400 clubs coûte 2,5 s à froid et 0,07 s ensuite : le premier appel GDS d'un serveur paie un
-échauffement (chargement et compilation du code GDS). Un passage précédent donnait 5,8 s puis 2,5 s : l'écart à froid
-varie d'un démarrage à l'autre, pas l'ordre de grandeur. C mesure 5,2 s pour la projection des clubs sur le vrai graphe
-(12,6 s au total) : une partie est probablement cet échauffement. Chaque étape reste sous les 10 s des lectures, et
-l'API utilise de toute façon une limite de 600 s pour ce recalcul.
+La projection de 400 clubs coûte 2,4 s à froid et 0,11 s ensuite : le premier appel GDS d'un serveur paie un
+échauffement (chargement et compilation du code GDS). Avant l'ajout de `Betweenness`, deux passages donnaient 5,8 et
+6,5 s à froid, 2,4 et 2,5 s à chaud : l'écart à froid varie d'un démarrage à l'autre, pas l'ordre de grandeur. C mesure
+5,2 s pour la projection des clubs sur le vrai graphe (12,6 s au total) : une partie est probablement cet
+échauffement. Chaque étape reste sous les 10 s des lectures, et l'API utilise de toute façon une limite de 600 s pour
+ce recalcul.
 
 | `similar_players` | p50 (ms) | p95 (ms) | db hits | Lignes | Remarque |
 | --- | ---: | ---: | ---: | ---: | --- |
-| cosinus exhaustif (code actuel de C) | 295,0 | 549,2 | 200 004 | 10 | `NodeByLabelScan` + cosinus sur 50 000 vecteurs |
-| **index vectoriel** (essai, base de benchmark seulement) | 12,3 | 17,0 | 51 | 10 | rappel@10 = 0,96 face au calcul exact |
+| cosinus exhaustif (code actuel de C) | 245,9 | 611,6 | 200 004 | 10 | `NodeByLabelScan` + cosinus sur 50 000 vecteurs |
+| **index vectoriel** (essai, base de benchmark seulement) | 13,0 | 19,4 | 51 | 10 | rappel@10 = 0,97 face au calcul exact |
 
 `similar_players` est la seule lecture de C qui parcourt tout un label de joueurs ; C mesure p50 307 ms et p95 1,1 s
-sur les vraies données (un passage précédent ici : 176 ms au p50, contre 8,5 ms avec l'index vectoriel). Un index
-vectoriel Neo4j (`CREATE VECTOR INDEX … OPTIONS {indexConfig: {vector.dimensions: 64,
-vector.similarity_function: 'cosine'}}` puis `db.index.vector.queryNodes`) le rend 20 à 24 fois plus rapide selon le
-passage, pour 95 à 96 % des mêmes voisins (recherche approchée). Il n'est pas dans le schéma : à proposer à A et C, pas ajouté par B.
+sur les vraies données. Selon le passage, le p50 exhaustif varie de 176 à 295 ms et celui de l'index vectoriel de 8,5
+à 13 ms. Un index vectoriel Neo4j (`CREATE VECTOR INDEX … OPTIONS {indexConfig: {vector.dimensions: 64,
+vector.similarity_function: 'cosine'}}` puis `db.index.vector.queryNodes`) le rend 19 à 24 fois plus rapide, pour 95
+à 97 % des mêmes voisins (recherche approchée). Il n'est pas dans le schéma : à proposer à A et C, pas ajouté par B.
 
 ## 6. Lire ces plans
 
@@ -218,6 +224,6 @@ statistiques trompeuses.
   chaîne voulue. Elles fixent des ordres de grandeur et comparent des plans ; les vraies données ne sont pas sur la
   machine de B (fichier DuckDB absent), d'où les chiffres réels de C cités en sections 4 et 5.
 - Une seule machine, Docker sous Windows : les p50 et p95 varient de quelques millisecondes d'un passage à l'autre
-  (jusqu'à ×1,7 pour `similar_players`) ; les db hits, eux, sont déterministes.
+  (jusqu'à ×1,7 pour `similar_players`, dont le p95 est le plus bruité) ; les db hits, eux, sont déterministes.
 - Le temps serveur d'un `PROFILE` isolé inclut parfois la planification ; les comparaisons s'appuient sur les db hits
   et sur les p50 mesurés sur 30 appels.

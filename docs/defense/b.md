@@ -199,8 +199,8 @@ Détail et protocole dans `docs/perf.md` (50 000 joueurs, 220 000 `PLAYED_WITH`,
 | Réécriture de `search` (B7) | ancien curseur ~180 000 db hits à chaque page ; nouveau 48 à 336 fois moins, 5,6 à 7,5 fois plus rapide |
 | Chemin sans solution | borné `*..6` : 1 952 db hits ; non borné : 286 509 (×147) |
 | Tous les chemins sans `shortestPath` | ×9 par saut (degré moyen 8,8) : 382 115 db hits à 6 sauts |
-| Recalcul GDS (C) | 5,8 à 6,5 s au premier appel après démarrage, 2,4 à 2,5 s ensuite ; chaque étape < 10 s |
-| `similar_players` (C) | 176 à 295 ms p50 en cosinus exhaustif ; 8,5 à 12,3 ms avec un index vectoriel (rappel@10 = 0,95 à 0,96) |
+| Recalcul GDS (C) | 9,0 s au premier appel après démarrage (avec `Betweenness`), 2,6 s ensuite ; chaque étape < 10 s |
+| `similar_players` (C) | 176 à 295 ms p50 en cosinus exhaustif ; 8,5 à 13 ms avec un index vectoriel (rappel@10 = 0,95 à 0,97) |
 | Rumeurs (D) | `for_player` 30 ms p50 mais `NodeByLabelScan` sur `Article` (pas d'index sur `source`) : à signaler à D et A |
 
 ## 11. Relecture des PR de C (#10, #11, #12)

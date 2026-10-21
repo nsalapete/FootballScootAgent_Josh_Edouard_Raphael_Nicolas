@@ -73,6 +73,13 @@ def test_name_helpers():
     assert pick_unique("Arsenal", arsenals, club=True) == 11
     assert pick_unique("Arsenal Football Club", arsenals, club=True) == 11
     assert pick_unique("Arsenal Sarandi", arsenals, club=True) == 2
+    liverpools = [
+        {"id": 31, "name": "Liverpool FC", "in_scope": True},
+        {"id": 10663, "name": "Liverpool FC", "in_scope": False},
+        {"id": 9252, "name": "Liverpool U23", "in_scope": False},
+    ]
+    assert pick_unique("Liverpool Football Club", liverpools, club=True) == 31
+    assert pick_unique("Liverpool", [dict(row, in_scope=False) for row in liverpools], club=True) is None
     assert quote_in_text("Wexley are MONITORING Santos", "News: wexley are monitoring Santos, says a source.")
     assert not quote_in_text("Wexley signed Santos", "Wexley are monitoring Santos")
     assert rumour_id_for("u", 1, 2) == rumour_id_for("u", 1, 2) != rumour_id_for("u", 1, 3)

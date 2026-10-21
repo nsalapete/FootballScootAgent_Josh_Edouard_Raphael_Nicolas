@@ -87,7 +87,7 @@ LIMIT 5
 """
 _RESOLVE_CLUB = """
 CALL db.index.fulltext.queryNodes('club_name_ft', $query) YIELD node, score
-RETURN node.club_id AS id, node.name AS name, score
+RETURN node.club_id AS id, node.name AS name, score, EXISTS { (node)-[:PLAYS_IN]->(:Competition) } AS in_scope
 ORDER BY score DESC, id ASC
 LIMIT 10
 """
@@ -234,8 +234,10 @@ def pick_unique(name: str, candidates: list[dict[str, Any]], club: bool = False)
     """The id of the only candidate whose name contains every word of `name`; None when zero or several do.
 
     For clubs, youth and reserve teams are set aside unless `name` names one ("Real Madrid" in an article is the first
-    team, not Real Madrid U19), and a club whose name is exactly `name` wins over longer ones ("Arsenal" is
-    Arsenal FC, not Arsenal Sarandí). Both cases left most club names unresolved on the real graph.
+    team, not Real Madrid U19), a club whose name is exactly `name` wins over longer ones ("Arsenal" is
+    Arsenal FC, not Arsenal Sarandí), and a club of the scope leagues wins over a namesake abroad (two clubs are
+    called "Liverpool FC": Liverpool and Liverpool Montevideo). These cases left most club names unresolved on the
+    real graph.
     """
     words = club_words(name) if club else set(normalise(name).split())
     if not words:
@@ -245,7 +247,9 @@ def pick_unique(name: str, candidates: list[dict[str, Any]], club: bool = False)
     if club:
         fitting = [fitting[index] for index in prefer_first_teams(name, [row["name"] for row in fitting])]
         exact = [row for row in fitting if club_words(row["name"]) == words]
-        fitting = exact if len(exact) == 1 else fitting
+        fitting = exact or fitting
+        in_scope = [row for row in fitting if row.get("in_scope")]
+        fitting = in_scope if len(in_scope) == 1 else fitting
     return fitting[0]["id"] if len(fitting) == 1 else None
 
 

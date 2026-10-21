@@ -1,7 +1,8 @@
 """Graph Data Science and link prediction. Owner: C.
 
 Contract: keep these method names, parameters and return types. Agent tools (D) call them directly.
-Algorithms write their scores on the nodes (`pagerank`, `community_id`, `embedding`) so that reads stay cheap.
+Algorithms write their scores on the nodes (`pagerank`, `community_id`, `betweenness`, `embedding`) so that
+reads stay cheap.
 
 `refresh` builds two in-memory projections, runs the algorithms in `write` mode and always drops the projections,
 even when an algorithm fails. Each step is its own transaction; the API runs `refresh` on a client with the longer
@@ -74,6 +75,14 @@ RETURN nodePropertiesWritten
 
 DROP = "CALL gds.graph.drop($graph, false) YIELD graphName RETURN graphName"
 
+# Unweighted betweenness on the directed transfer network: share of shortest seller -> buyer paths through a club,
+# i.e. the clubs that bridge otherwise separate markets (a weight would be read as a distance, not a strength).
+BETWEENNESS = """
+CALL gds.betweenness.write($graph, {relationshipTypes: ['SENDS_TO'], writeProperty: 'betweenness'})
+YIELD nodePropertiesWritten
+RETURN nodePropertiesWritten
+"""
+
 HUBS = """
 MATCH (c:Club)
 WHERE c.pagerank IS NOT NULL
@@ -107,6 +116,14 @@ ORDER BY similarity DESC, player_id
 LIMIT $k
 """
 
+GATEWAYS = """
+MATCH (c:Club)
+WHERE c.betweenness IS NOT NULL
+RETURN c.club_id AS club_id, c.name AS name, c.betweenness AS score
+ORDER BY score DESC, club_id
+LIMIT $limit
+"""
+
 PREDICTED_MOVES = """
 MATCH (p:Player {player_id: $player_id})-[m:PREDICTED_MOVE]->(c:Club)
 RETURN p.player_id AS player_id, c.club_id AS club_id, c.name AS club_name, m.prob AS probability,
@@ -131,6 +148,7 @@ class GdsService:
             self.client.write(PROJECT_CLUBS, {"graph": clubs})
             self.client.write(PAGERANK, {"graph": clubs})
             self.client.write(LOUVAIN, {"graph": clubs})
+            self.client.write(BETWEENNESS, {"graph": clubs})
             self.client.write(PROJECT_TEAMMATES, {"graph": teammates})
             self.client.write(FASTRP, {"graph": teammates, "dimension": EMBEDDING_DIMENSION, "seed": RANDOM_SEED})
         finally:
@@ -138,7 +156,7 @@ class GdsService:
                 self._drop(name)
         return GdsRefreshReport(
             projections=["clubs", "teammates"],
-            algorithms=["pageRank", "louvain", "fastRP"],
+            algorithms=["pageRank", "louvain", "betweenness", "fastRP"],
             duration_s=round(time.perf_counter() - start, 3),
         )
 
@@ -153,6 +171,10 @@ class GdsService:
     def hubs(self, limit: int = 20) -> list[ClubScore]:
         """Clubs sorted by weighted PageRank on `SENDS_TO`."""
         return [ClubScore(**row) for row in self.client.read(HUBS, {"limit": limit})]
+
+    def gateways(self, limit: int = 20) -> list[ClubScore]:
+        """Clubs sorted by betweenness on `SENDS_TO`: the bridges between transfer markets (added method)."""
+        return [ClubScore(**row) for row in self.client.read(GATEWAYS, {"limit": limit})]
 
     def communities(self, min_size: int = 2) -> list[Community]:
         """Louvain communities of clubs with at least `min_size` members, largest first."""

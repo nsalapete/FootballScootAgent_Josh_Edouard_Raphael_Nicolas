@@ -7,7 +7,7 @@ from app.routers.network import get_admin_gds_service
 from app.services.gds import DROP, FASTRP, GDS_TIMEOUT_S, PAGERANK, GdsService
 
 CLEANUP = (
-    "MATCH (c:Club) REMOVE c.pagerank, c.community_id",
+    "MATCH (c:Club) REMOVE c.pagerank, c.community_id, c.betweenness",
     "MATCH (p:Player) REMOVE p.embedding",
 )
 
@@ -40,7 +40,7 @@ def test_refresh_drops_both_projections_and_reports():
     client = RecordingClient()
     report = GdsService(client).refresh()
     assert report.projections == ["clubs", "teammates"]
-    assert report.algorithms == ["pageRank", "louvain", "fastRP"]
+    assert report.algorithms == ["pageRank", "louvain", "betweenness", "fastRP"]
     assert report.duration_s >= 0
     dropped = [params["graph"] for query, params in client.calls if query == DROP]
     assert [name.split("-")[0] for name in dropped] == ["clubs", "teammates"]
@@ -169,3 +169,28 @@ def test_refresh_endpoint_uses_the_long_timeout_client(monkeypatch):
     override = RecordingClient()
     assert get_admin_gds_service(override).client is override  # a test override is kept
     assert GDS_TIMEOUT_S > 10
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_gateways_sorted_by_betweenness(refreshed):
+    gateways = refreshed[0].gateways(8)
+    assert len(gateways) == 8
+    assert [club.score for club in gateways] == sorted((club.score for club in gateways), reverse=True)
+    assert all(club.score >= 0 for club in gateways) and gateways[0].score > 0
+    assert len(refreshed[0].gateways(3)) == 3
+
+
+@pytest.mark.neo4j
+@pytest.mark.gds
+def test_gds_routes_end_to_end(refreshed, api):
+    assert refreshed
+    similar = api.get("/api/players/1/similar", params={"k": 3})
+    assert similar.status_code == 200
+    assert len(similar.json()) == 3 and 1 not in [player["player_id"] for player in similar.json()]
+    gateways = api.get("/api/clubs/gateways", params={"limit": 2})
+    assert gateways.status_code == 200 and len(gateways.json()) == 2
+    hubs = api.get("/api/clubs/hubs", params={"limit": 8}).json()
+    assert {hub["club_id"] for hub in hubs} == set(range(1, 9))
+    assert api.get("/api/network/communities").status_code == 200
+    assert api.get("/api/clubs/gateways", params={"limit": 0}).status_code == 422

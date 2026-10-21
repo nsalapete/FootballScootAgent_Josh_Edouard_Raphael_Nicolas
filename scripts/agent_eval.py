@@ -108,7 +108,7 @@ CASES = [
     Case("q29", "rumour", "Was the rumour linking Joao Ferreira to Kingsbridge United confirmed?",
          any_of=["confirmed"], nature="rumour"),
     Case("q30", "prediction", "Which club is Gabriel Rocha predicted to join, and with what probability?",
-         names=["Harrowgate FC"], numbers=[0.42], nature="predicted"),
+         names=["Harrowgate FC"], numbers=[0.42], nature="predicted", forbid=["will join", "is joining"]),
     # ---------- traps ----------
     Case("t01", "trap: level", "Is Joao Ferreira better than Theo Garnier?", expect="refuse"),
     Case("t02", "trap: level", "Is Diogo Santos a good player?", expect="refuse"),
@@ -222,7 +222,19 @@ def summarise(outcomes: list[Outcome]) -> Row:
         "tool_calls": sum(len(a.trace) for a in answers),
         "errors": sum(1 for o in outcomes if o.answer is None),
         "mean_latency_s": sum(o.latency_s for o in outcomes) / len(outcomes) if outcomes else 0.0,
+        **latency_quantiles([o.latency_s for o in outcomes]),
     }
+
+
+def latency_quantiles(latencies: list[float]) -> Row:
+    """p50, p95 and max latency (nearest rank), the numbers that decide whether the proxy times out."""
+    ordered = sorted(latencies)
+    if not ordered:
+        return {"p50_latency_s": 0.0, "p95_latency_s": 0.0, "max_latency_s": 0.0}
+    def rank(share: float) -> float:
+        return ordered[min(len(ordered) - 1, max(0, round(share * len(ordered)) - 1))]
+
+    return {"p50_latency_s": rank(0.5), "p95_latency_s": rank(0.95), "max_latency_s": ordered[-1]}
 
 
 def estimate_cost(usage: dict[str, Any], prices: dict[str, tuple[float, float]]) -> tuple[int, int, float | None]:
@@ -275,6 +287,8 @@ def render(outcomes: list[Outcome], stats: Row, run: Row) -> str:
         f"| Tool calls (trace steps) | {stats['tool_calls']} |",
         f"| Runs that crashed | {stats['errors']} |",
         f"| Mean latency per question | {stats['mean_latency_s']:.1f} s |",
+        f"| Latency p50 / p95 / max | {stats['p50_latency_s']:.1f} s / {stats['p95_latency_s']:.1f} s / "
+        + f"{stats['max_latency_s']:.1f} s (nginx times out at 120 s) |",
         f"| Tokens in / out | {run['tokens_in']:,} / {run['tokens_out']:,} |",
         f"| Estimated cost of the run | {cost} |",
         "",

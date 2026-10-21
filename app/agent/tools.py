@@ -36,7 +36,9 @@ SCHEMA_HINT = (
     + "scores are written by GDS); (:Player)-[:CITIZEN_OF]->(:Country {code, name}); "
     + "(:Player)-[:MADE]->(:Transfer {transfer_id, date, season, fee_eur, is_loan}), "
     + "(:Transfer)-[:FROM]->(:Club) (seller), (:Transfer)-[:TO]->(:Club) (buyer); "
-    + "(:Club)-[:PLAYS_IN {season}]->(:Competition {competition_id, name}); "
+    + "(:Club)-[:PLAYS_IN {season}]->(:Competition {competition_id, name}) has ONE relationship per season: "
+    + "always match it with the season you mean, e.g. `-[:PLAYS_IN {season: t.season}]->` for a transfer, "
+    + "or every row is counted once per season; "
     + "(:Player)-[:HAS_VALUATION]->(:Valuation {valuation_id, date, value_eur}); "
     + "(:Player)-[:PLAYED_WITH {matches, first_season, last_season}]-(:Player) (match it without direction); "
     + "(:Club)-[:SENDS_TO {count, total_fee_eur}]->(:Club); "
@@ -297,12 +299,20 @@ class ToolBox:
         """Last resort: validated read-only Cypher, run in a read transaction."""
         check = self.validator.validate(query)
         nature = query_nature(query)
+        repaired = False
+        if not check.valid and all(reason.startswith("no_limit:") for reason in check.reasons):
+            # The only fault is a missing LIMIT: adding one can only shrink the result, so the tool repairs it
+            # instead of spending a planner turn (and the time budget) on a retry. Everything is validated again.
+            retry = self.validator.validate(f"{check.query} LIMIT {self.validator.max_limit}")
+            check, repaired = (retry, True) if retry.valid else (check, False)
         if not check.valid:
             error = "; ".join(check.reasons)
             return ToolResult(tool="cypher_fallback", nature=nature, data={"query": query}, error=error)
         rows = self.players.client.read(check.query)
         evidence = evidence_from_rows(rows)
         data: dict[str, Any] = {"query": check.query, "rows": rows[:100]}
+        if repaired:
+            data["repaired"] = f"LIMIT {self.validator.max_limit} added by the validator (it was missing)"
         if not rows:
             data["note"] = "No row: check the property names against the schema (there is no `id` property)."
         elif not evidence:
@@ -324,7 +334,9 @@ class ToolBox:
             "club_pipeline": (
                 self.club_pipeline,
                 PipelineArgs,
-                "Outgoing transfers of a club grouped by destination competition, with the club totals.",
+                "Where a club sells its players: its outgoing transfers grouped by the competition of the buying "
+                + "club at the time of the transfer, with counts, fees and the club totals. Use it for any question "
+                + "on a club's sales, buyers by league or money received.",
             ),
             "teammate_path": (self.teammate_path, PathArgs, "Shortest chain of teammates between two players."),
             "value_trend": (self.value_trend, PlayerArgs, "Market-value history of a player."),

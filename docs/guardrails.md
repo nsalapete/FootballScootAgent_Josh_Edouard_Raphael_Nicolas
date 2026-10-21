@@ -27,11 +27,12 @@ question ──► router rules ──► router model ──► planner (tools)
 
 | Guardrail | What it blocks |
 | --- | --- |
-| 10 parameterised tools, each calling one service method (`resolve_entity`, `search_players`, `player_profile`, `club_pipeline`, `teammate_path`, `value_trend`, `similar_players`, `predicted_moves`, `rumours`, `cypher_fallback`) | Free-form Cypher for questions a tested, indexed query already answers |
+| 11 parameterised tools, each calling one service method (`resolve_entity`, `search_players`, `player_profile`, `club_pipeline`, `teammate_path`, `value_trend`, `similar_players`, `club_hubs`, `transfer_gateways`, `predicted_moves`, `rumours`), plus `cypher_fallback` | Free-form Cypher for questions a tested, indexed query already answers |
+| Honest tool descriptions | The model over-reading a tool: `similar_players` means shared teammate circles (not the same position), a predicted move is a club-pair probability (never "X will join Y"), PageRank marks clubs that receive players |
 | Pydantic argument schemas (`max_hops ≤ 6`, `limit ≤ 50`, `k ≤ 20`…) | Out-of-range arguments invented by the model |
-| Budget of 6 tool calls per question, 8 planner turns | Runaway loops and cost explosions; extra calls are skipped and appear in the trace as failed |
+| Budget of 6 tool calls per question, 8 planner turns, 60 s of planning | Runaway loops and cost explosions; extra calls are skipped and appear in the trace as failed; after 60 s the writer answers with what it has, so a question stays under the 120 s timeout of the nginx proxy |
 | Errors returned, never raised | A failing service (including `NotImplementedError`) shows up as a failed trace step; the answer then says nothing can be verified |
-| Nature fixed by the tool | `predicted_moves` is always `predicted` and `rumours` always `rumour`, even when they fail |
+| Nature fixed by the tool | `predicted_moves` is always `predicted` and `rumours` always `rumour`, even when they fail; a generated query takes the nature of the labels it names, string literals ignored (`'Rumour FC'` is a club name) |
 | Schema in the `cypher_fallback` description | Hallucinated property names (`p.id`): the first evaluation run showed it, the second run went from 0 / 13 to 12 / 13 on these questions |
 
 ## 3. Generated Cypher: `CypherValidator` (`app/agent/guardrails.py`)
@@ -44,7 +45,8 @@ therefore harmless, and a `LIMIT 5` hidden in a comment does not count. Each bro
 | --- | --- | --- |
 | `write` | `CREATE MERGE DELETE DETACH SET REMOVE DROP FOREACH INSERT`, `LOAD CSV` | Data destruction or tampering; file reads and outgoing requests (`LOAD CSV`, SSRF) |
 | `admin` | `SHOW GRANT DENY REVOKE ALTER RENAME USE TERMINATE`, `IN TRANSACTIONS`, `START/STOP DATABASE` | User enumeration, privilege escalation, switching to the `system` database, batch writes |
-| `procedure` | `CALL` outside an allow-list (`db.index.fulltext.queryNodes`, `db.labels`…, GDS `stream`/`stats`); `dbms.*`, `gds.graph.*`, GDS `write`/`mutate`, write or dynamic `apoc.*`, even as functions | `apoc.cypher.run('…')` would hide any query from the validator; `dbms.*` leaks configuration |
+| `procedure` | `CALL` outside an allow-list (`db.index.fulltext.queryNodes`, `db.labels`…); every GDS procedure; `dbms.*`, write or dynamic `apoc.*`, even as functions | `apoc.cypher.run('…')` would hide any query from the validator; `dbms.*` leaks configuration. GDS calls could not succeed anyway (no named projection survives `refresh`): generated queries read the stored `pagerank`, `betweenness`, `community_id` |
+| `parameter` | `$name` anywhere | The fallback runs without parameters: the query would fail with `ParameterMissing` instead of giving the planner a reason to inline the value |
 | `label`, `relationship` | Names outside the schema allow-lists (back-ticked names included: `` :`Player Secret` ``) | Exploring hidden data; hallucinated schema |
 | `dynamic` | Dynamic labels `:$(x)` | Bypassing the allow-list through parameters |
 | `unbounded_path`, `path_too_long` | `*`, `*2..`, quantifiers `+` and `{1,}`, more than 6 hops | Combinatorial explosion on `PLAYED_WITH` (denial of service) |
@@ -69,7 +71,7 @@ A deterministic verifier removes a claim, recording the reason in `removal_reaso
 | The claim has no evidence id | Unsupported statements | `test_unknown_or_unreturned_evidence_is_removed` |
 | An evidence id does not exist in the graph (one parameterised query per label) | Invented ids (`Player:999`) | same, and `test_graph_evidence_on_the_mini_graph` |
 | An evidence id was not returned by any tool of the trace | Real ids cited for facts the agent never looked up | same |
-| A number cited is in no tool result (nor in the question); any format is accepted (`50 000 000 €`, `€12m`, `42%` for 0.42, dates) | **Invented or computed figures** | `test_invented_amount_is_removed_by_the_verifier` |
+| A number cited is in no tool result (nor in the question); any format is accepted (`50 000 000 €`, `€12m`, `42%` for 0.42, dates). Amounts and decimals get a 1 % rounding tolerance; whole numbers under 10,000 (years, ages, counts) must match exactly | **Invented or computed figures** | `test_invented_amount_is_removed_by_the_verifier`, `test_rounding_tolerance_only_for_amounts` |
 | The nature does not match the evidence (`Rumour:` → `rumour`, `PREDICTED_MOVE:` → `predicted`, ids seen only in hypothesis tools cannot be `verified`) | A prediction or a rumour presented as a fact | `test_prediction_and_rumour_must_keep_their_nature` |
 
 When a claim is removed, the answer text is **rebuilt from the kept claims only**, with `[prediction]` and
@@ -95,7 +97,9 @@ When a claim is removed, the answer text is **rebuilt from the kept claims only*
   - nginx limits `/api/agent/` to 10 requests per minute per IP (B).
   - With `AGENT_REQUIRE_API_KEY=true` in `.env` (production), `POST /api/agent/ask` also requires the
     `X-API-Key` header, like the rumour import.
-  - The switch is off by default, so local runs, tests and the mini-graph demo stay open.
+  - The switch is off by default, so local runs, tests and the mini-graph demo stay open. It is read from the
+    environment or `.env`, so it works with `make run` as well as with Docker.
+  - Switched on while `API_KEY` is empty, the route fails closed (503) rather than staying open.
 
 ## Demo
 
@@ -191,9 +195,16 @@ pytest tests/test_d_agent.py::test_invented_amount_is_removed_by_the_verifier -v
 
 - **The verifier checks evidence, numbers and nature, not meaning.** A claim that cites real ids and real figures
   but connects them wrongly (the right fee attached to the wrong club) can pass. Requiring evidence ids from the
-  same tool row would tighten it.
+  same tool row would tighten it. The same holds when a generated query is itself wrong.
+  - **Real case.** A query joined `PLAYS_IN`, which has one relationship per season, without the season, so it
+    counted each transfer 6 times: "300 M across 12 transfers" instead of 50 M across 2. The verifier could not
+    see it.
+  - **Mitigation.** The schema hint warns about it, and the planner is sent to `club_pipeline`, which is tested,
+    before any generated Cypher.
 - **Some router rules are broad.** A question containing "best player" is refused even if it asks for something
   measurable. A false refusal is the safe failure.
-- **Rounding tolerance of 1 %.** "About 12.1 M" is accepted for 12,000,000.
+- **Rounding tolerance of 1 % on amounts.** "About 12.1 M" is accepted for 12,000,000.
+- **Dates are matched component by component.** With 2022-07-15 in a tool result, a claim citing "15" or "July"
+  alone is supported by that date, whatever it says about it.
 - **The evaluation is on the mini graph** (`docs/agent_eval.md`: 39 / 40 on the second run). On the full
   Transfermarkt graph, the same guardrails apply, but name ambiguity is far more frequent.

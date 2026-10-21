@@ -62,7 +62,8 @@ player's level or talent, betting or odds, match scores or results, any request 
 unrelated to football transfers. List in `entity_names` every player or club name exactly as written."""
 
 PLANNER_PROMPT = """You are a football scouting analyst. Answer only from tool results, never from memory.
-Use the parameterised tools first; call `cypher_fallback` only when no other tool fits (read-only, LIMIT <= 100).
+Use the parameterised tools first: they are tested and their totals are right. Read their descriptions before
+choosing; call `cypher_fallback` only for what no other tool covers (read-only, LIMIT <= 100).
 Use at most {max_calls} tool calls. Known entities: {entities}. Stop calling tools once you have enough data.
 Any number you will state must appear in a tool result: let the tools or the query compute totals and counts."""
 
@@ -258,7 +259,9 @@ class ScoutAgent:
         last = state["messages"][-1]
         wants_tools = isinstance(last, AIMessage) and bool(last.tool_calls)
         within_budget = state.get("tool_calls", 0) < MAX_TOOL_CALLS
-        within_time = time.monotonic() - state.get("started", time.monotonic()) < MAX_PLANNING_SECONDS
+        # The first round of tools always runs: a slow model can spend most of the budget on its first turn.
+        elapsed = time.monotonic() - state.get("started", time.monotonic())
+        within_time = elapsed < MAX_PLANNING_SECONDS or state.get("tool_calls", 0) == 0
         if wants_tools and within_budget and within_time and state.get("planner_turns", 0) < MAX_PLANNER_TURNS:
             return "tools"
         return "writer"

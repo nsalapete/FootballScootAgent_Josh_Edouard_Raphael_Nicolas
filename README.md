@@ -153,7 +153,7 @@ Owner: B. Details in [`docs/architecture.md`](docs/architecture.md) (diagram: `d
 
 Owner: A. The schema contract is [`docs/schema.md`](docs/schema.md) (constraints and indexes:
 `scripts/constraints.cypher`). The modeling rationale, data sources and anti-genericity appendix are in
-`docs/modeling.md`, in review in PR #32.
+[`docs/modeling.md`](docs/modeling.md) (diagram: `docs/schema.drawio`).
 
 ```
 (:Player)-[:MADE]->(:Transfer)-[:FROM|TO]->(:Club)-[:PLAYS_IN {season}]->(:Competition)-[:IN_COUNTRY]->(:Country)
@@ -278,7 +278,7 @@ nginx/  Dockerfile  docker-compose.yml  Makefile  .github/workflows/
 
 | Role | Member | Scope | Commits (`git shortlog -sn --no-merges main`) | Merged PRs |
 | --- | --- | --- | ---: | --- |
-| A · data, lead | Raphael Hazan ([@raphaelhazan](https://github.com/raphaelhazan)) | schema, ingestion, data quality, rumour confirmation, CI | 12 | #13, #14, #15, #16 |
+| A · data, lead | Raphael Hazan ([@raphaelhazan](https://github.com/raphaelhazan)) | schema, ingestion, data quality, rumour confirmation, CI | 12 | #13, #14, #15, #16, #32 |
 | B · API, Docker | Nicolas Salapete ([@nsalapete](https://github.com/nsalapete)) | API, services, Docker, nginx, image publishing, benchmarks | 27 | #5, #6, #7, #8, #9, #17, #18, #33, #34 |
 | C · GDS, ML | Edouard Souied ([@edouard-sd](https://github.com/edouard-sd)) | GDS algorithms, link prediction, notebook | 17 | #10, #11, #12, #23, #25, #27, #28, #29 |
 | D · agent, rumours | Josh Soussan ([@joshsssn](https://github.com/joshsssn)) | LLM client, LangGraph agent, guardrails, rumours, evaluation, README | 22 | #1, #2, #3, #4, #19, #20, #21, #22, #24, #26, #30, #31, #35 |

@@ -24,8 +24,9 @@ class RumourOut(BaseModel):
     nature: Literal["rumour"] = "rumour"
     extraction_confidence: float | None = Field(None, ge=0, le=1, description="Confidence given by the extraction")
     source_reliability: float | None = Field(
-        None, ge=0, le=1, description="Smoothed share of the source's decided rumours that were confirmed"
+        None, ge=0, le=1, description="Best smoothed reliability among the sources reporting the rumour"
     )
+    sources_count: int | None = Field(None, ge=0, description="Distinct sources (domains) reporting the rumour")
 
 
 class ImportRequest(BaseModel):
@@ -45,3 +46,4 @@ class ImportReport(BaseModel):
     feeds_failed: int = Field(0, description="Feeds that could not be downloaded or parsed")
     extraction_errors: int = Field(0, description="Articles whose LLM extraction failed (retried next time)")
     rejected_quotes: int = Field(0, description="Extracted rumours whose quote is not in the article")
+    unresolved_examples: list[str] = Field(default_factory=list, description="Up to 20 names that did not resolve")

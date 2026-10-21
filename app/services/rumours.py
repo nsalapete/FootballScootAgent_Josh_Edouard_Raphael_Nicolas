@@ -45,11 +45,13 @@ MATCH (r)-[:TARGET]->(c:Club)
 OPTIONAL MATCH (a:Article)-[:REPORTS]->(r)
 WITH r, p, c, a
 ORDER BY a.published_at IS NULL, a.published_at DESC
-WITH r, p, c, collect(a)[0] AS a
-WITH r, p, c, a, coalesce(a.published_at, date(r.extracted_at)) AS published
+WITH r, p, c, collect(a) AS articles
+WITH r, p, c, articles, articles[0] AS a
+WITH r, p, c, articles, a, coalesce(a.published_at, date(r.extracted_at)) AS published
 RETURN r.rumour_id AS rumour_id, p.player_id AS player_id, c.club_id AS club_id, c.name AS club_name,
        r.status AS status, r.confidence AS confidence, coalesce(a.source, 'unknown') AS source,
-       coalesce(a.url, '') AS url, published AS published_at, r.quote AS quote
+       coalesce(a.url, '') AS url, published AS published_at, r.quote AS quote,
+       [article IN articles | article.source] AS sources
 ORDER BY published IS NULL, published DESC, rumour_id
 LIMIT $limit
 """
@@ -108,6 +110,9 @@ MATCH (p:Player {player_id: row.player_id}), (c:Club {club_id: row.club_id})
 MERGE (r:Rumour {rumour_id: row.rumour_id})
 ON CREATE SET r.status = 'pending', r.confidence = row.confidence, r.quote = row.quote,
               r.extracted_at = datetime()
+// A firmer article on a pending rumour raises its confidence and brings its quote (every article stays linked).
+ON MATCH SET r.quote = CASE WHEN row.confidence > r.confidence THEN row.quote ELSE r.quote END,
+             r.confidence = CASE WHEN row.confidence > r.confidence THEN row.confidence ELSE r.confidence END
 MERGE (a)-[:REPORTS]->(r)
 MERGE (r)-[:ABOUT]->(p)
 MERGE (r)-[:TARGET]->(c)
@@ -118,7 +123,8 @@ EXTRACTION_PROMPT = """You read football news and extract TRANSFER RUMOURS only:
 to a named club. Ignore match reports, confirmed official signings described as done deals with no club named,
 and opinions. For each rumour give:
 - `player`: the player's full name as written,
-- `club`: the destination club as written,
+- `club`: the destination club's full official name when the text makes it unambiguous ("Spurs" -> "Tottenham
+  Hotspur", "PSG" -> "Paris Saint-Germain"), otherwise as written,
 - `quote`: one sentence copied word for word from the text that states the rumour,
 - `confidence`: 0 to 1, how firmly the text states the move (e.g. "monitoring" 0.3, "agreed personal terms" 0.8).
 Return an empty list when the text contains no rumour. Never invent a name that is not in the text."""
@@ -257,13 +263,17 @@ class RumourService:
         rows = self.client.read(
             _FOR_PLAYER, {"player_id": player_id, "status": status, "limit": MAX_RUMOURS_PER_PLAYER}
         )
-        reliability = self.source_reliability(sorted({row["source"] for row in rows})) if rows else {}
+        cited = sorted({source for row in rows for source in row["sources"] or [row["source"]] if source})
+        reliability = self.source_reliability(cited) if rows else {}
         rumours = []
         for row in rows:
             extraction = row["confidence"]
-            trust = reliability.get(row["source"], DEFAULT_PRIOR)
+            sources = [source for source in row.pop("sources") or [row["source"]] if source]
+            # The rumour is as credible as its most reliable source (several articles can report it).
+            trust = max((reliability.get(source, DEFAULT_PRIOR) for source in sources), default=DEFAULT_PRIOR)
             fields = {
                 **row,
+                "sources_count": len(set(sources)),
                 "published_at": _native(row["published_at"]),
                 "confidence": round(extraction * trust, 3),
                 "extraction_confidence": extraction,
@@ -340,6 +350,9 @@ class RumourService:
             player_id = self._resolve(_RESOLVE_PLAYER, rumour.player)
             club_id = self._resolve(_RESOLVE_CLUB, rumour.club)
             report.unresolved_names += (player_id is None) + (club_id is None)
+            for name, found in ((rumour.player, player_id), (rumour.club, club_id)):
+                if found is None and name not in report.unresolved_examples and len(report.unresolved_examples) < 20:
+                    report.unresolved_examples.append(name)
             if player_id is None or club_id is None:
                 continue
             pending = self.client.read(_PENDING_PAIR, {"player_id": player_id, "club_id": club_id})
